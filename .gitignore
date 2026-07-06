@@ -12,10 +12,19 @@ GoogleService-Info.plist
 
 # Logs / Cache / Dev servers
 firebase-debug.log
+firestore-debug.log
+database-debug.log
+ui-debug.log
+storage-debug.log
 .firebase/
 node_modules/
 build/
 .dart_tool/
+emulator-data/
+
+# Functions build output
+functions/node_modules/
+functions/lib/
 
 # IDE files
 .idea/
@@ -32,3 +41,11 @@ docs_chatgpt/
 samecharge_docs_*.zip
 *.sha256
 verification_results.txt
+
+# Local dev helper scripts & logs (not project artefacts)
+smoke_test.cmd
+run_test.ps1
+emulator_log*.txt
+full_paths.txt
+node_paths.txt
+firebase_paths.txt
