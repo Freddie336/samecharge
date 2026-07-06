@@ -32,6 +32,7 @@ Tek checkbox kullanılmaz. Her rıza türü ayrı checkbox ile alınır:
 
 `analytics` ve `marketing` false olduğunda onboarding engellenmez.
 Server validation yalnızca `terms`, `privacy`, `explicit_data` türlerinin `granted: true` olmasını kontrol eder.
+Consent version değeri canonical legal document version ID'sidir; lowercase, slash içermeyen, 1-64 ASCII karakterli güvenli ID formatına uymalıdır. Her consent type en fazla bir kez gönderilebilir; optional consent yoksa granted varsayılmaz.
 
 ---
 
@@ -68,6 +69,9 @@ Server validation yalnızca `terms`, `privacy`, `explicit_data` türlerinin `gra
 
 ### 5.2 Profil
 - Görüntülenen ad, şehir, bio, ilgi alanları, amaç, cinsiyet.
+- Onboarding metinleri canonical doğrulanır: `displayName` NFKC + trim + whitespace collapse sonrası 2-30 Unicode code point; `bio` NFKC + trim sonrası 0-300 Unicode code point.
+- İlgi alanları lokalize etiket değil canonical interest ID dizisidir: 0-10 unique lowercase slug, her ID 1-32 ASCII karakter ve `^[a-z0-9]+(?:_[a-z0-9]+)*$` formatında.
+- Şehir, kullanıcı metni değil canonical `cityId` değeridir. Kapalı beta teknik allowlist'i yalnızca `istanbul` içerir; İstanbul dışına genişleme kararı ürün doğrulamasına bağlıdır.
 - `selfGender`: MVP'de zorunlu değil; varsayılan `unspecified`. Bu değer diğer kullanıcının cinsiyet filtresini bypass etmez.
 - Onboarding için en az bir finalize edilmiş fotoğraf gerekir; fotoğraf `pending` olabilir. Discovery için en az bir `approved` fotoğraf zorunludur.
 - En fazla 4 aktif fotoğraf.

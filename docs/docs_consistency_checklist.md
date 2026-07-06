@@ -27,6 +27,8 @@
 | `processAccountDeletion` yalnızca iç worker | ✅ |
 | Retention süreleri `TBD_LEGAL_REVIEW` ve server-configurable | ✅ |
 | Analytics içinde UID, exact age, mesaj metni ve fotoğraf yolu yok | ✅ |
+| Onboarding displayName/bio/interests/cityId/consent version sözleşmeleri tek canonical kurala bağlı | ✅ |
+| `profile_photos/{photoId}` Firestore metadata, `profile_photos/{uid}/{photoId}.webp` Cloud Storage object path | ✅ |
 | Tüm dokümanların cross-document status değeri `verified` | ✅ |
 
 ---
@@ -79,7 +81,15 @@
 
 ---
 
-## 5. Doğrulama Kapsamı
+## 5. Pass 4'te Düzeltilen Çelişkiler
+
+| ID | Önceki sorun | Çözüm |
+|---|---|---|
+| C-18 | Onboarding validation and identifier contracts eksikti | resolved: displayName normalization and bounds unified; bio bounds unified; interests ID/count/uniqueness contract unified; cityId format and İstanbul beta allowlist unified; consent version format unified; consent uniqueness and required/optional behavior unified; equivalent/conflicting onboarding replay behavior unified; Firestore profile photo document path and Storage object path separated |
+
+---
+
+## 6. Doğrulama Kapsamı
 
 Bu `verified` sonucu yalnızca dokümanların birbirleriyle tutarlı olduğunu ifade eder. Aşağıdakileri tamamlanmış saymaz:
 

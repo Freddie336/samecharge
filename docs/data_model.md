@@ -66,10 +66,10 @@ CandidateView ve match profili yalnızca bu belgedeki onaylı canlı alanları k
 | Alan | Tür | Sahip | Açıklama |
 |---|---|---|---|
 | `ownerId` | String | Server | Auth UID |
-| `proposedDisplayName` | String | Kullanıcı → callable | Önerilen değer |
-| `proposedCityId` | String | Kullanıcı → callable | Önerilen değer |
-| `proposedBio` | String | Kullanıcı → callable | Önerilen değer |
-| `proposedInterests` | String[] | Kullanıcı → callable | Önerilen değer |
+| `proposedDisplayName` | String | Kullanıcı → callable | Canonical `displayName`; NFKC + trim + whitespace collapse sonrası 2-30 Unicode code point |
+| `proposedCityId` | String | Kullanıcı → callable | Canonical city ID; `^[a-z0-9]+(?:_[a-z0-9]+)*$`; kapalı beta allowlist: `istanbul` |
+| `proposedBio` | String | Kullanıcı → callable | Canonical bio; NFKC + trim sonrası 0-300 Unicode code point |
+| `proposedInterests` | String[] | Kullanıcı → callable | 0-10 unique canonical interest ID; her biri 1-32 ASCII lowercase slug |
 | `proposedIntent` | String | Kullanıcı → callable | Önerilen değer |
 | `status` | String enum (`draft\|pending\|approved\|rejected\|needs_review`) | **Server only** | Revizyon moderasyon durumu |
 | `reasonCode` | String? | **Server only** | Kullanıcıya gösterilebilen genel kod |
@@ -103,10 +103,12 @@ CandidateView ve match profili yalnızca bu belgedeki onaylı canlı alanları k
 ## 6. `profile_photos/{photoId}`
 **Erişim sınıfı:** Admin SDK. İstemciye `getMyProfile` üzerinden sanitized DTO döner; ham belge okunmaz.
 
+`profile_photos/{photoId}` canonical Firestore metadata document path'tir. Firestore altında `profile_photos/{uid}/{photoId}` yapısı kullanılmaz. Kalıcı görsel dosyanın Cloud Storage yolu ayrı bir `storagePath` alanıdır ve server tarafından belirlenir.
+
 | Alan | Tür | Sahip | İstemciye gösterilir mi? |
 |---|---|---|---|
 | `ownerId` | String | Server | ✅ (kendi fotoğrafı için) |
-| `storagePath` | String | **Server only** | ❌ |
+| `storagePath` | String (`profile_photos/{uid}/{photoId}.webp`) | **Server only** | ❌ |
 | `status` | String enum (`temporary\|processing\|pending\|approved\|rejected\|failed\|needs_review`) | **Server only** | ✅ (sanitized: sadece durum kodu) |
 | `moderationReason` | String? | **Server only** | ✅ (yalnızca reason code, not moderator note) |
 | `fileSizeBytes` | Number | **Server only** | ❌ |
@@ -352,10 +354,12 @@ TTL'li gösterim geçmişi.
 ## 21. `consent_history/{uid}/records/{recordId}`
 **Erişim sınıfı:** Sahibi kendi kayıtlarını okuyabilir; yalnızca server yazar.
 
+`recordId`, canonical consent identity'nin SHA-256 hash'idir. Canonical identity `consentType + NUL separator + consentVersion` biçimindedir; UID hash input'una eklenmek zorunda değildir çünkü parent path'tedir. Hash lowercase hexadecimal yazılır. Raw consent version belge yoluna yerleştirilmez ve secret kabul edilmez.
+
 | Alan | Tür |
 |---|---|
 | `consentType` | String (`terms\|privacy\|explicit_data\|analytics\|marketing`) |
-| `version` | String |
+| `version` | String (`^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$`) |
 | `granted` | Boolean |
 | `recordedAt` | Timestamp |
 | `ipRegion` | String? (ülke düzeyi) |

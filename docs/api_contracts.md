@@ -11,6 +11,33 @@
 - Tüm hatalar aşağıdaki stabil uygulama hata kodlarıyla döner.
 - **App Check:** Production ortamında tüm istemci-callable functions için zorunludur. Dev/emulator ortamında debug provider istisna olarak izin verilir. `"Önerilir"` ifadesi artık kullanılmaz.
 
+### Canonical Onboarding Doğrulaması
+
+Onboarding ve profil metin alanlarında ortak canonical doğrulama sırası:
+
+1. Girdi `string` olmalıdır.
+2. Unicode NFKC normalization uygulanır.
+3. Baştaki ve sondaki Unicode whitespace kaldırılır.
+4. `displayName` içindeki ardışık whitespace tek normal boşluğa dönüştürülür.
+5. Unicode C0/C1 control karakterleri reddedilir.
+6. Bidi override/isolate kontrol karakterleri reddedilir.
+7. Uzunluk JavaScript UTF-16 code unit ile değil Unicode code point sayısıyla ölçülür.
+8. Canonical değer doğrulama ve saklama için kullanılır.
+
+Bu normalizasyon kullanıcı UID, consent type, consent version, city ID veya interest ID gibi identifier alanlarına uygulanmaz. Identifier alanları kendi canonical formatlarına tam olarak uymalıdır; hatalı değerler trim, lowercase veya transliteration ile sessizce düzeltilmez.
+
+`displayName` sözleşmesi: NFKC + trim + whitespace collapse sonrası 2-30 Unicode code point; satır sonu, C0/C1 control ve bidi control karakterleri yasaktır. Harf tabanlı dar regex kullanılmaz; Türkçe karakterler, farklı alfabeler, boşluk, apostrof, tire, nokta ve makul Unicode isim karakterleri kabul edilebilir.
+
+`bio` sözleşmesi: NFKC + trim sonrası 0-300 Unicode code point; normal satır sonları kabul edilir, diğer C0/C1 control ve bidi control karakterleri reddedilir. Boş bio onboarding'i engellemez.
+
+`interests` sözleşmesi: Kullanıcıya gösterilen lokalize etiketler değil canonical interest ID dizisidir. Dizi 0-10 öğe içerebilir. Her ID 1-32 ASCII karakter, lowercase slug ve `^[a-z0-9]+(?:_[a-z0-9]+)*$` formatında olmalıdır. Örnek geçerli ID'ler: `music`, `coffee`, `live_music`, `outdoor_sports`. `Live Music`, `live-music`, `live/music`, `live music`, boş string ve 32 karakterden uzun ID'ler geçersizdir. Duplicate ID reddedilir; dizi sırası kullanıcı tercih sırası olarak korunabilir. Backend bu aşamada ürün katalog içeriği icat etmez; PR 5 yalnızca format, count ve uniqueness doğrular.
+
+`cityId` sözleşmesi: Kullanıcının yazdığı şehir adı değil server-supported canonical city ID'dir. Genel format `^[a-z0-9]+(?:_[a-z0-9]+)*$`, 2-64 ASCII karakter, lowercase slug. Mevcut kapalı beta server allowlist yalnızca `istanbul` değerini içerir. `İstanbul`, `Istanbul`, `istanbul ` veya başka şehir ID'si reddedilir. İkinci şehir eklemek allowlist değişikliği ve ürün kararı gerektirir; İstanbul dışına genişleme kararı hâlâ ürün doğrulamasına bağlıdır.
+
+`consentRecords.version` sözleşmesi: Kullanıcı metni değil canonical legal document version ID'sidir. 1-64 ASCII karakter, lowercase, başı ve sonu alphanumeric, ortada yalnızca lowercase harf, rakam, nokta, alt çizgi ve tire bulunur. Format: `^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$`. Örnek geçerli değerler: `v1`, `v1.0`, `2026-07-06`, `beta_terms_v1`. `/terms/v1`, `../v1`, `V1`, `v1/`, boş string, whitespace içeren değer ve 64 karakterden uzun değer geçersizdir. Raw version Firestore document ID olarak kullanılmaz ve loglanmaz.
+
+`consentRecords` sözleşmesi: İzin verilen type değerleri `terms`, `privacy`, `explicit_data`, `analytics`, `marketing`. Her type en fazla bir kez bulunabilir; bilinmeyen veya duplicate type reddedilir. `terms`, `privacy`, `explicit_data` mevcut olmalı ve `granted=true` olmalıdır. `analytics` ve `marketing` isteğe bağlıdır, `granted=false` olabilir, yoklukları `granted=true` varsayılmaz. `granted` kesin boolean olmalıdır. Client timestamp kabul edilmez; server timestamp kullanılır. Her gönderilen rıza ayrı history belgesi olarak saklanır ve her type kendi version değerine sahiptir.
+
 ### İstemci-Callable vs. İç Worker Ayrımı
 
 | Tür | Kim çağırır? | App Check |
@@ -127,11 +154,11 @@
 **Request:**
 ```json
 {
-  "displayName": "string (2-30 char)",
-  "bio": "string (max 300 char)",
-  "interests": ["string"],
+  "displayName": "string (2-30 Unicode code points)",
+  "bio": "string (0-300 Unicode code points)",
+  "interests": ["canonical_interest_id"],
   "intent": "dating | friendship | chat",
-  "cityId": "string"
+  "cityId": "canonical_city_id"
 }
 ```
 
@@ -172,11 +199,11 @@
 **Request:**
 ```json
 {
-  "displayName": "string",
+  "displayName": "string (2-30 Unicode code points)",
   "birthDate": "YYYY-MM-DD",
-  "cityId": "string",
-  "bio": "string (max 300 char)",
-  "interests": ["string"],
+  "cityId": "canonical_city_id",
+  "bio": "string (0-300 Unicode code points)",
+  "interests": ["canonical_interest_id"],
   "intent": "dating | friendship | chat",
   "selfGender": "male | female | nonbinary | unspecified",
   "shownGenderPreferences": ["male", "female", "nonbinary"],
@@ -192,8 +219,11 @@
 
 **Server validasyonları:**
 - 18+ yaş server time ile kontrol.
+- `displayName`, `bio`, `interests`, `cityId` ve consent version alanları yukarıdaki canonical sözleşmelere göre doğrulanır.
+- Mevcut kapalı beta allowlist'inde yalnızca `cityId == "istanbul"` kabul edilir.
 - `terms`, `privacy`, `explicit_data` türleri için `granted: true` zorunludur; bu üçü eksik veya `false` ise `input_invalid` döner.
 - `analytics` ve `marketing` isteğe bağlıdır; `false` olabilir ve onboarding'i engellemez.
+- Her consent type en fazla bir kez bulunabilir; unknown veya duplicate type `input_invalid` döndürür.
 - `selfGender` isteğe bağlıdır; belirtilmezse `unspecified` kaydedilir.
 - `shownGenderPreferences` boş olabilir; doluysa yalnızca `male|female|nonbinary|unspecified` değerlerini içerir.
 - En az bir finalize edilmiş fotoğraf `pending|approved|needs_review` durumunda olmalıdır; moderasyon onayını onboarding ekranında beklemek gerekmez.
@@ -204,7 +234,7 @@
 **Yazılan belgeler:** `users_private`, `users_internal`, `preferences`, `profiles`, ilk `profile_revisions` kaydı ve `consent_history`.
 
 **Rate limit:** IP tabanlı 5/saat.
-**Idempotency:** Daha önce tamamlanmışsa `already_exists`.
+**Idempotency:** İlk geçerli çağrı onboarding kayıtlarını atomik olarak oluşturur ve `{ "status": "completed" }` döner. Aynı canonical payload yeniden gönderilirse yeni primary belge veya consent history belgesi oluşturulmaz, mevcut veri değiştirilmez ve aynı başarılı response döner. Onboarding tamamlandıktan sonra farklı canonical payload gönderilirse mevcut identity/onboarding verisi değişmez, yeni consent history oluşturulmaz ve `already_exists` application error döner. Canonical karşılaştırmada object key sırası dikkate alınmaz; array sırası anlamlı alanlarda korunur; consent kayıtları karşılaştırma için consent type'a göre sıralanır. Raw request payload saklanmaz.
 **Hata kodları:** `unauthenticated`, `app_check_required`, `input_invalid`, `account_restricted`, `already_exists`.
 
 ---
