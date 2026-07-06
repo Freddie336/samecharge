@@ -16,8 +16,8 @@ Kullanıcı fotoğraf seçer
 → Sunucu: Görsel bomba ve aşırı çözünürlük kontrolleri
 → Sunucu: Metadata ve EXIF sıfırdan temizlenir
 → Sunucu: WebP/JPEG yeniden encode
-→ Kalıcı yola taşır: profile_photos/{uid}/{photoId}.webp
-→ profile_photos belgesi: status='pending' olarak oluşturulur
+→ Kalıcı Cloud Storage yoluna taşır: profile_photos/{uid}/{photoId}.webp
+→ Firestore metadata belgesi oluşturur: profile_photos/{photoId}, status='pending'
 → Moderasyon kararı: approved | rejected | needs_review
 → Sadece approved fotoğraflar CandidateView ve match profiline dahil edilir
 ```
@@ -51,10 +51,12 @@ Kullanıcı fotoğraf seçer
 
 ```
 temp_uploads/{uid}/   → Yalnızca sahibi yazabilir, max 5 MB, JPEG/PNG/WebP
-profile_photos/{uid}/ → Yalnızca Admin SDK (Cloud Functions) yazabilir
+profile_photos/{uid}/ → Cloud Storage permanent object prefix; yalnızca Admin SDK (Cloud Functions) yazabilir
 ```
 
 Onaylanmış fotoğraflara doğrudan public URL erişimi kapalıdır. Erişim yalnızca kısa süreli imzalı URL ile sağlanır.
+
+Firestore metadata için canonical document path `profile_photos/{photoId}` değeridir. Firestore altında `profile_photos/{uid}/{photoId}` kullanılmaz. İlişki alanları: Firestore document ID `photoId`, Firestore `ownerId` alanı `uid`, Firestore `storagePath` alanı `profile_photos/{uid}/{photoId}.webp`. İstemci permanent path'i veya Firestore metadata belgesini kendisi belirlemez; `finalizeProfilePhoto` server tarafında oluşturur.
 
 ---
 

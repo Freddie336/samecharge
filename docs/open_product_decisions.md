@@ -195,6 +195,8 @@
 | **Target decision date** | Beta başlangıcında |
 | **Affected documents** | product_requirements.md, matching_algorithm.md |
 
+Not: Mevcut kapalı beta teknik allowlist'i yalnızca canonical `cityId="istanbul"` değerini kabul eder. Bu teknik allowlist, İstanbul dışına production genişleme kararının tamamlandığı anlamına gelmez; genişleme hâlâ kullanıcı görüşmesi ve ürün doğrulamasına bağlıdır.
+
 ---
 
 ## OD-013: Pass Kararı Kalıcılığı (Pass Cooldown / Reconsideration)

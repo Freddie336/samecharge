@@ -51,7 +51,7 @@ Her rıza türü ayrı `consent_history/{uid}/records/{recordId}` belgesi olarak
 | `analytics` | Firebase Analytics | Hayır |
 | `marketing` | Pazarlama Push bildirimleri | Hayır |
 
-Her kayıt: `consentType`, `version`, `granted`, `recordedAt`, `ipRegion` (ülke seviyesi) içerir.
+Her kayıt: `consentType`, `version`, `granted`, `recordedAt`, `ipRegion` (ülke seviyesi) içerir. `version`, canonical legal document version ID'sidir; slash içermeyen lowercase safe ID formatına uyar ve raw hali Firestore document ID olarak kullanılmaz. Consent history `recordId`, `consentType + NUL + version` canonical identity'sinin SHA-256 hash'idir.
 
 ---
 
