@@ -1,0 +1,26 @@
+export const APP_ERROR_CODES = [
+  "unauthenticated",
+  "app_check_required",
+  "rate_limited",
+  "input_invalid",
+  "profile_not_eligible",
+  "candidate_token_invalid",
+  "candidate_token_expired",
+  "candidate_token_used",
+  "candidate_token_revoked",
+  "report_token_invalid",
+  "report_token_expired",
+  "report_token_used",
+  "discovery_limit_reached",
+  "match_not_active",
+  "messaging_disabled",
+  "content_rejected",
+  "account_restricted",
+  "not_found",
+  "already_exists",
+  "permission_denied",
+  "reauthentication_required",
+  "internal",
+] as const;
+
+export type AppErrorCode = typeof APP_ERROR_CODES[number];
