@@ -34,11 +34,7 @@ class SplashScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: 24),
                 const _StatusLine(text: 'Infrastructure ready'),
-                _StatusLine(
-                  text: config.isFirebaseConfigured
-                      ? 'Firebase configured'
-                      : 'Firebase not configured',
-                ),
+                _StatusLine(text: config.firebase.statusLabel),
                 const SizedBox(height: 32),
                 FilledButton(
                   onPressed: () => context.go('/walkthrough'),

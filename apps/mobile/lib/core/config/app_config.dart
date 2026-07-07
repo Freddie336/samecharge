@@ -1,34 +1,57 @@
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../firebase/firebase_runtime_config.dart';
 import 'app_environment.dart';
 
 class AppConfig {
   const AppConfig({
     required this.environment,
     required this.displayName,
-    required this.isFirebaseConfigured,
+    required this.firebase,
   });
 
-  factory AppConfig.forEnvironment(AppEnvironment environment) {
+  factory AppConfig.forEnvironment(
+    AppEnvironment environment, {
+    String firebaseTarget = const String.fromEnvironment(
+      'SAMECHARGE_FIREBASE_TARGET',
+    ),
+    String emulatorHost = const String.fromEnvironment(
+      'SAMECHARGE_FIREBASE_EMULATOR_HOST',
+    ),
+    FirebaseOptions? devCloudOptions,
+  }) {
     return switch (environment) {
-      AppEnvironment.dev => const AppConfig(
+      AppEnvironment.dev => AppConfig(
         environment: AppEnvironment.dev,
         displayName: 'SameCharge Dev',
-        isFirebaseConfigured: false,
+        firebase: FirebaseRuntimeConfig.forEnvironment(
+          environment,
+          firebaseTarget: firebaseTarget,
+          emulatorHost: emulatorHost,
+          devCloudOptions: devCloudOptions,
+        ),
       ),
-      AppEnvironment.prod => const AppConfig(
+      AppEnvironment.prod => AppConfig(
         environment: AppEnvironment.prod,
         displayName: 'SameCharge',
-        isFirebaseConfigured: false,
+        firebase: FirebaseRuntimeConfig.forEnvironment(
+          environment,
+          firebaseTarget: firebaseTarget,
+          emulatorHost: emulatorHost,
+          devCloudOptions: devCloudOptions,
+        ),
       ),
     };
   }
 
   final AppEnvironment environment;
   final String displayName;
-  final bool isFirebaseConfigured;
+  final FirebaseRuntimeConfig firebase;
 
   bool get isDevelopment => environment.isDevelopment;
+
+  bool get isFirebaseConfigured => firebase.target.isEnabled;
 }
 
 final appConfigProvider = Provider<AppConfig>((ref) {
