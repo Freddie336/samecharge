@@ -1,11 +1,13 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const admin = require("firebase-admin");
-const { completeOnboarding, getAppBootstrap } = require("../lib/index");
+const sharp = require("sharp");
+const { completeOnboarding, finalizeProfilePhoto, getAppBootstrap } = require("../lib/index");
 const { createConsentRecordId } = require("../lib/features/onboarding/consent-record-id");
 
 const auth = admin.auth();
 const firestore = admin.firestore();
+const bucket = admin.storage().bucket();
 let testCounter = 0;
 let currentUid = "alice-0";
 let currentEmail = "alice-0@example.invalid";
@@ -48,6 +50,10 @@ async function clearFirestore() {
   }
 }
 
+async function clearStorage() {
+  await bucket.deleteFiles({ force: true }).catch(() => undefined);
+}
+
 async function deleteCollection(collectionRef) {
   const snapshot = await collectionRef.limit(100).get();
 
@@ -74,6 +80,23 @@ async function resetUser(uid, email) {
   }
 
   await auth.createUser({ uid, email });
+}
+
+async function uploadTempImage(uid = currentUid, uploadId = "AbCdEfGhIjKlMnOp") {
+  const bytes = await sharp({
+    create: {
+      width: 32,
+      height: 32,
+      channels: 3,
+      background: "#24795b",
+    },
+  }).png().toBuffer();
+  const path = `temp_uploads/${uid}/${uploadId}`;
+  await bucket.file(path).save(bytes, {
+    contentType: "image/png",
+    resumable: false,
+  });
+  return path;
 }
 
 async function seedFinalizedPhoto(uid = currentUid) {
@@ -106,16 +129,19 @@ test.beforeEach(async () => {
   currentUid = `alice-${testCounter}`;
   currentEmail = `${currentUid}@example.invalid`;
   await clearFirestore();
+  await clearStorage();
   await resetUser(currentUid, currentEmail);
   await seedFinalizedPhoto(currentUid);
 });
 
-test("integration: exported callable count is exactly two", () => {
+test("integration: exported callable count is exactly three", () => {
   assert.deepEqual(Object.keys(require("../lib/index")).sort(), [
     "completeOnboarding",
+    "finalizeProfilePhoto",
     "getAppBootstrap",
   ]);
   assert.equal(typeof completeOnboarding.run, "function");
+  assert.equal(typeof finalizeProfilePhoto.run, "function");
   assert.equal(typeof getAppBootstrap.run, "function");
 });
 
@@ -138,6 +164,53 @@ test("integration: bootstrap before onboarding returns onboarding-required state
   assert.equal(result.profileStatus, "draft");
   assert.equal(result.discoveryEligible, false);
   assert.deepEqual(result.consentSummary, {});
+});
+
+test("integration: finalizeProfilePhoto creates one permanent object and metadata", async () => {
+  await clearFirestore();
+  const tempFilePath = await uploadTempImage();
+  const first = await finalizeProfilePhoto.run(request({ tempFilePath }));
+  const second = await finalizeProfilePhoto.run(request({ tempFilePath }));
+
+  assert.deepEqual(second, first);
+  assert.equal(first.status, "pending");
+  assert.equal("downloadUrl" in first, false);
+
+  const metadata = (await firestore.collection("profile_photos").doc(first.photoId).get()).data();
+  assert.equal(metadata.ownerId, currentUid);
+  assert.equal(metadata.status, "pending");
+  assert.equal(metadata.storagePath, `profile_photos/${currentUid}/${first.photoId}.webp`);
+  assert.equal(metadata.mimeType, "image/webp");
+  assert.equal((await bucket.file(tempFilePath).exists())[0], false);
+  assert.equal((await bucket.file(metadata.storagePath).exists())[0], true);
+});
+
+test("integration: finalizeProfilePhoto rejects invalid image without metadata", async () => {
+  await clearFirestore();
+  const path = `temp_uploads/${currentUid}/InvalidImageId01`;
+  await bucket.file(path).save(Buffer.from("not an image"), {
+    contentType: "image/png",
+    resumable: false,
+  });
+
+  await assert.rejects(
+    () => finalizeProfilePhoto.run(request({ tempFilePath: path })),
+    (error) => error.details.code === "content_rejected",
+  );
+  assert.equal((await firestore.collection("profile_photos").get()).size, 0);
+});
+
+test("integration: completeOnboarding accepts finalized photo and rejects zero photo", async () => {
+  await clearFirestore();
+  await assert.rejects(
+    () => completeOnboarding.run(request(validInput())),
+    (error) => error.details.code === "input_invalid",
+  );
+
+  const tempFilePath = await uploadTempImage();
+  await finalizeProfilePhoto.run(request({ tempFilePath }));
+  const result = await completeOnboarding.run(request(validInput()));
+  assert.equal(result.status, "completed");
 });
 
 test("integration: valid onboarding creates documented records and sanitized bootstrap", async () => {

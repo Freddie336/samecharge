@@ -27,7 +27,7 @@ const emulatorsArgs = [
   "--project",
   "demo-samecharge-onboarding",
   "--only",
-  "auth,firestore,functions",
+  "auth,firestore,functions,storage",
   "--config",
   "firebase.json",
   testCommand,
@@ -40,6 +40,11 @@ const child = spawn(nodeCommand, emulatorsArgs, {
     ...process.env,
     GCLOUD_PROJECT: "demo-samecharge-onboarding",
     GOOGLE_CLOUD_PROJECT: "demo-samecharge-onboarding",
+    FIREBASE_STORAGE_EMULATOR_HOST: "127.0.0.1:9199",
+    FIREBASE_CONFIG: JSON.stringify({
+      projectId: "demo-samecharge-onboarding",
+      storageBucket: "demo-samecharge-onboarding.appspot.com",
+    }),
   },
 });
 
