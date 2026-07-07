@@ -10,6 +10,7 @@ const { makeRequest, testSchema } = require("./helpers");
 test("secure callable options enforce App Check and do not consume replay tokens", () => {
   const options = getSecureClientCallableOptions();
   assert.equal(options.enforceAppCheck, true);
+  assert.equal(options.region, "europe-west1");
   assert.equal(options.consumeAppCheckToken, undefined);
 });
 
