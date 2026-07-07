@@ -34,7 +34,7 @@ function addIssue(context: z.RefinementCtx, message: string): void {
 }
 
 export function normalizeDisplayName(value: string, context: z.RefinementCtx): string {
-  const normalized = value.normalize("NFKC").trim();
+  const normalized = value.normalize("NFKC");
 
   if (hasC0OrC1Control(normalized, false)) {
     addIssue(context, "displayName_control_character");
@@ -46,7 +46,7 @@ export function normalizeDisplayName(value: string, context: z.RefinementCtx): s
     return z.NEVER;
   }
 
-  const canonical = normalized.replace(/\s+/gu, " ");
+  const canonical = normalized.trim().replace(/\s+/gu, " ");
   const length = countCodePoints(canonical);
 
   if (length < 2 || length > 30) {
@@ -58,17 +58,19 @@ export function normalizeDisplayName(value: string, context: z.RefinementCtx): s
 }
 
 export function normalizeBio(value: string, context: z.RefinementCtx): string {
-  const canonical = value.normalize("NFKC").trim();
+  const normalized = value.normalize("NFKC");
 
-  if (hasC0OrC1Control(canonical, true)) {
+  if (hasC0OrC1Control(normalized, true)) {
     addIssue(context, "bio_control_character");
     return z.NEVER;
   }
 
-  if (BIDI_CONTROL_PATTERN.test(canonical)) {
+  if (BIDI_CONTROL_PATTERN.test(normalized)) {
     addIssue(context, "bio_bidi_control");
     return z.NEVER;
   }
+
+  const canonical = normalized.trim();
 
   if (countCodePoints(canonical) > 300) {
     addIssue(context, "bio_length");

@@ -201,7 +201,19 @@ test("completeOnboarding conflicting retry returns already_exists and overwrites
   const conflicts = [
     { displayName: "Derya" },
     { birthDate: "1999-07-06" },
-    { cityId: "istanbul", intent: "friendship" },
+    { bio: "Selam" },
+    { interests: ["coffee", "music"] },
+    { intent: "friendship" },
+    { selfGender: "female" },
+    { shownGenderPreferences: ["female"] },
+    {
+      consentRecords: [
+        { type: "terms", version: "v2", granted: true },
+        { type: "privacy", version: "v1", granted: true },
+        { type: "explicit_data", version: "v1", granted: true },
+        { type: "analytics", version: "v1", granted: false },
+      ],
+    },
     {
       consentRecords: [
         { type: "terms", version: "v1", granted: true },
@@ -216,6 +228,13 @@ test("completeOnboarding conflicting retry returns already_exists and overwrites
         { type: "privacy", version: "v1", granted: true },
         { type: "explicit_data", version: "v1", granted: true },
         { type: "analytics", version: "v1", granted: true },
+      ],
+    },
+    {
+      consentRecords: [
+        { type: "terms", version: "v1", granted: true },
+        { type: "privacy", version: "v1", granted: true },
+        { type: "explicit_data", version: "v1", granted: true },
       ],
     },
   ];

@@ -45,8 +45,11 @@ test("onboarding schema counts Unicode code points for displayName boundaries", 
 
 test("onboarding schema rejects displayName and bio control or bidi control characters", () => {
   assertInputInvalid(validOnboardingInput({ displayName: "Ada\nLovelace" }));
+  assertInputInvalid(validOnboardingInput({ displayName: "\nAda" }));
+  assertInputInvalid(validOnboardingInput({ displayName: "Ada\t" }));
   assertInputInvalid(validOnboardingInput({ displayName: "Ada\u202e" }));
   assertInputInvalid(validOnboardingInput({ bio: "Merhaba\u0001" }));
+  assertInputInvalid(validOnboardingInput({ bio: "\tMerhaba" }));
   assertInputInvalid(validOnboardingInput({ bio: "Merhaba\u2066" }));
   assert.equal(parse(validOnboardingInput({ bio: "Line 1\nLine 2" })).bio, "Line 1\nLine 2");
 });
