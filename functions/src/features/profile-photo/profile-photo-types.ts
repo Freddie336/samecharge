@@ -40,9 +40,16 @@ export interface PhotoStorage {
 
 export interface PhotoMetadataStore {
   getPhoto(photoId: string): Promise<Record<string, unknown> | undefined>;
-  activePhotoCount(uid: string): Promise<number>;
-  createPhoto(photoId: string, data: Record<string, unknown>): Promise<void>;
+  createPhotoIfWithinLimit(
+    photoId: string,
+    uid: string,
+    data: Record<string, unknown>,
+  ): Promise<CreatePhotoResult>;
 }
+
+export type CreatePhotoResult =
+  | { status: "created" }
+  | { status: "already_exists"; photo: Record<string, unknown> };
 
 export interface FinalizeProfilePhotoDependencies {
   storage: PhotoStorage;

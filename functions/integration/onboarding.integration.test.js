@@ -100,9 +100,16 @@ async function uploadTempImage(uid = currentUid, uploadId = "AbCdEfGhIjKlMnOp") 
 }
 
 async function seedFinalizedPhoto(uid = currentUid) {
+  const storagePath = `profile_photos/${uid}/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.webp`;
+  await bucket.file(storagePath).save(Buffer.from("finalized"), {
+    contentType: "image/webp",
+    resumable: false,
+  });
   await firestore.collection("profile_photos").doc(`photo-${uid}`).set({
     ownerId: uid,
     status: "pending",
+    storagePath,
+    mimeType: "image/webp",
     createdAt: admin.firestore.Timestamp.fromDate(new Date("2026-07-06T00:00:00.000Z")),
   });
 }
@@ -211,6 +218,22 @@ test("integration: completeOnboarding accepts finalized photo and rejects zero p
   await finalizeProfilePhoto.run(request({ tempFilePath }));
   const result = await completeOnboarding.run(request(validInput()));
   assert.equal(result.status, "completed");
+});
+
+test("integration: completeOnboarding rejects photo metadata without permanent object", async () => {
+  await clearFirestore();
+  await firestore.collection("profile_photos").doc("orphaned-photo").set({
+    ownerId: currentUid,
+    status: "pending",
+    storagePath: `profile_photos/${currentUid}/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.webp`,
+    mimeType: "image/webp",
+    createdAt: admin.firestore.Timestamp.fromDate(new Date("2026-07-06T00:00:00.000Z")),
+  });
+
+  await assert.rejects(
+    () => completeOnboarding.run(request(validInput())),
+    (error) => error.details.code === "input_invalid",
+  );
 });
 
 test("integration: valid onboarding creates documented records and sanitized bootstrap", async () => {

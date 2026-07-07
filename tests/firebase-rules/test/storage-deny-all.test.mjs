@@ -93,11 +93,34 @@ await runStorageDeniedCase(
 
 await runStorageDeniedCase(
   'Cloud Storage authenticated alice client is denied uploading bob profile photo',
-  (testEnv) => testEnv.authenticatedContext('alice').storage().ref('profile_photos/bob/photo.jpg').put(payload, { contentType: 'image/jpeg' }),
+  (testEnv) => testEnv.authenticatedContext('alice')
+    .storage()
+    .ref('profile_photos/bob/photo.jpg')
+    .put(payload, { contentType: 'image/jpeg' }),
 );
 
 await runStorageDeniedCase(
-  'Cloud Storage authenticated alice client is denied reading bob private object metadata',
-  (testEnv) => testEnv.authenticatedContext('alice').storage().ref('private/bob/test.txt').getMetadata(),
-  (storage) => putTestObject(storage, 'private/bob/test.txt'),
+  'Cloud Storage authenticated alice client is denied reading profile photo metadata',
+  (testEnv) => testEnv.authenticatedContext('alice')
+    .storage()
+    .ref('profile_photos/alice/photo.webp')
+    .getMetadata(),
+  (storage) => putTestObject(storage, 'profile_photos/alice/photo.webp'),
+);
+
+await runStorageDeniedCase(
+  'Cloud Storage authenticated alice client is denied reading other-user profile photo',
+  (testEnv) => testEnv.authenticatedContext('alice')
+    .storage()
+    .ref('profile_photos/bob/photo.webp')
+    .getDownloadURL(),
+  (storage) => putTestObject(storage, 'profile_photos/bob/photo.webp'),
+);
+
+await runStorageDeniedCase(
+  'Cloud Storage authenticated alice client is denied listing storage objects',
+  (testEnv) => testEnv.authenticatedContext('alice')
+    .storage()
+    .ref('profile_photos')
+    .listAll(),
 );

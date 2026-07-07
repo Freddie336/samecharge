@@ -91,6 +91,10 @@ class OnboardingController extends Notifier<OnboardingUiState> {
   }
 
   Future<void> addPhoto() async {
+    if (state.loading) {
+      return;
+    }
+
     if (state.draft.photos.length >= 4) {
       state = state.copyWith(
         errorMessage: 'En fazla 4 fotoğraf ekleyebilirsin.',
@@ -110,6 +114,10 @@ class OnboardingController extends Notifier<OnboardingUiState> {
   }
 
   Future<bool> submit() async {
+    if (state.loading) {
+      return false;
+    }
+
     if (!state.canSubmit) {
       state = state.copyWith(
         errorMessage: 'Zorunlu alanları ve fotoğrafı tamamla.',
@@ -120,6 +128,7 @@ class OnboardingController extends Notifier<OnboardingUiState> {
     var completed = false;
     await _run(() async {
       await _onboardingRepository.completeOnboarding(state.draft);
+      state = const OnboardingUiState();
       completed = true;
     });
 

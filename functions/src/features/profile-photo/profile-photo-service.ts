@@ -77,17 +77,36 @@ class AdminPhotoMetadataStore implements PhotoMetadataStore {
     return snapshot.exists ? snapshot.data() : undefined;
   }
 
-  async activePhotoCount(uid: string): Promise<number> {
-    const snapshot = await this.firestore.collection("profile_photos")
-      .where("ownerId", "==", uid)
-      .where("status", "in", ACTIVE_PHOTO_STATUSES)
-      .limit(MAX_PROFILE_PHOTO_COUNT + 1)
-      .get();
-    return snapshot.size;
-  }
+  async createPhotoIfWithinLimit(
+    photoId: string,
+    uid: string,
+    data: Record<string, unknown>,
+  ): ReturnType<PhotoMetadataStore["createPhotoIfWithinLimit"]> {
+    return this.firestore.runTransaction(async (transaction) => {
+      const photoRef = this.firestore.collection("profile_photos").doc(photoId);
+      const existingPhoto = await transaction.get(photoRef);
 
-  async createPhoto(photoId: string, data: Record<string, unknown>): Promise<void> {
-    await this.firestore.collection("profile_photos").doc(photoId).create(data);
+      if (existingPhoto.exists) {
+        return {
+          status: "already_exists",
+          photo: existingPhoto.data() ?? {},
+        };
+      }
+
+      const activePhotos = await transaction.get(
+        this.firestore.collection("profile_photos")
+          .where("ownerId", "==", uid)
+          .where("status", "in", ACTIVE_PHOTO_STATUSES)
+          .limit(MAX_PROFILE_PHOTO_COUNT),
+      );
+
+      if (activePhotos.size >= MAX_PROFILE_PHOTO_COUNT) {
+        throw new AppError("rate_limited");
+      }
+
+      transaction.create(photoRef, data);
+      return { status: "created" };
+    });
   }
 }
 
@@ -182,16 +201,12 @@ export async function finalizeProfilePhotoForUid(
   const originalBytes = await dependencies.storage.download(input.tempFilePath);
   const processed = await dependencies.processImage(originalBytes, metadata.contentType ?? "");
 
-  if (await dependencies.store.activePhotoCount(uid) >= MAX_PROFILE_PHOTO_COUNT) {
-    throw new AppError("rate_limited");
-  }
-
   let permanentWritten = false;
   try {
     const operationTime = Timestamp.fromDate(dependencies.now());
     await dependencies.storage.save(permanentPath, processed.bytes, OUTPUT_CONTENT_TYPE);
     permanentWritten = true;
-    await dependencies.store.createPhoto(photoId, {
+    const createResult = await dependencies.store.createPhotoIfWithinLimit(photoId, uid, {
       ownerId: uid,
       storagePath: permanentPath,
       status: FINALIZE_PHOTO_STATUS,
@@ -202,12 +217,13 @@ export async function finalizeProfilePhotoForUid(
       createdAt: operationTime,
       updatedAt: operationTime,
     });
-    await dependencies.storage.delete(input.tempFilePath);
-  } catch (error) {
-    if (permanentWritten) {
-      await dependencies.storage.delete(permanentPath).catch(() => undefined);
+
+    if (createResult.status === "already_exists") {
+      assertExistingPhotoBelongsToUser(createResult.photo, uid, permanentPath);
     }
 
+    await dependencies.storage.delete(input.tempFilePath);
+  } catch (error) {
     if (isAlreadyExistsError(error)) {
       const replayed = await dependencies.store.getPhoto(photoId);
       if (replayed) {
@@ -215,6 +231,14 @@ export async function finalizeProfilePhotoForUid(
         await dependencies.storage.delete(input.tempFilePath);
         return { photoId, status: FINALIZE_PHOTO_STATUS };
       }
+    }
+
+    if (permanentWritten) {
+      await dependencies.storage.delete(permanentPath).catch(() => undefined);
+    }
+
+    if (error instanceof AppError) {
+      throw error;
     }
 
     throw new AppError("internal", { cause: error });

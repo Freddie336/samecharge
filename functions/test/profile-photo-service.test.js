@@ -61,6 +61,7 @@ class MemoryPhotoStore {
   constructor(photos = {}) {
     this.photos = new Map(Object.entries(photos));
     this.failCreate = false;
+    this.concurrentLimit = false;
   }
 
   async getPhoto(photoId) {
@@ -74,18 +75,29 @@ class MemoryPhotoStore {
       .length;
   }
 
-  async createPhoto(photoId, data) {
+  async createPhotoIfWithinLimit(photoId, uid, data) {
     if (this.failCreate) {
       throw new Error("CREATE_FAILED");
     }
 
     if (this.photos.has(photoId)) {
-      const error = new Error("ALREADY_EXISTS");
-      error.code = 6;
+      return {
+        status: "already_exists",
+        photo: this.photos.get(photoId),
+      };
+    }
+
+    if (this.concurrentLimit) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    if (await this.activePhotoCount(uid) >= MAX_PROFILE_PHOTO_COUNT) {
+      const error = new AppError("rate_limited");
       throw error;
     }
 
     this.photos.set(photoId, data);
+    return { status: "created" };
   }
 }
 
@@ -209,6 +221,29 @@ test("finalizeProfilePhoto replay converges without duplicate metadata", async (
   assert.deepEqual(secondStorage.deleted, [TEMP_PATH]);
 });
 
+test("finalizeProfilePhoto concurrent replay does not delete the valid permanent object", async () => {
+  const storage = new MemoryPhotoStorage({
+    [TEMP_PATH]: {
+      bytes: await jpegBytes(),
+      contentType: "image/jpeg",
+    },
+  });
+  const store = new MemoryPhotoStore();
+
+  const [first, second] = await Promise.all([
+    finalize({ storage, store }),
+    finalize({ storage, store }),
+  ]);
+
+  const photoId = deterministicPhotoId(UID, UPLOAD_ID);
+  const permanentPath = permanentPathFor(UID, photoId);
+
+  assert.deepEqual(second.result, first.result);
+  assert.equal(store.photos.size, 1);
+  assert.equal(storage.objects.has(permanentPath), true);
+  assert.equal(storage.objects.has(TEMP_PATH), false);
+});
+
 test("finalizeProfilePhoto enforces the active four-photo limit", async () => {
   const photos = {};
   for (let index = 0; index < MAX_PROFILE_PHOTO_COUNT; index += 1) {
@@ -223,6 +258,50 @@ test("finalizeProfilePhoto enforces the active four-photo limit", async () => {
     () => finalize({ photos }),
     (error) => error.appCode === "rate_limited",
   );
+});
+
+test("finalizeProfilePhoto preserves the active four-photo limit for different uploads", async () => {
+  const photos = {};
+  for (let index = 0; index < MAX_PROFILE_PHOTO_COUNT - 1; index += 1) {
+    photos[`photo-${index}`] = {
+      ownerId: UID,
+      status: "pending",
+      storagePath: `profile_photos/${UID}/photo-${index}.webp`,
+    };
+  }
+
+  const storage = new MemoryPhotoStorage({
+    [`temp_uploads/${UID}/ConcurrentUpload01`]: {
+      bytes: await jpegBytes(),
+      contentType: "image/jpeg",
+    },
+    [`temp_uploads/${UID}/ConcurrentUpload02`]: {
+      bytes: await jpegBytes(),
+      contentType: "image/jpeg",
+    },
+  });
+  const store = new MemoryPhotoStore(photos);
+  store.concurrentLimit = true;
+
+  const results = await Promise.allSettled([
+    finalize({
+      storage,
+      store,
+      tempFilePath: `temp_uploads/${UID}/ConcurrentUpload01`,
+    }),
+    finalize({
+      storage,
+      store,
+      tempFilePath: `temp_uploads/${UID}/ConcurrentUpload02`,
+    }),
+  ]);
+
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal(
+    results.filter((result) => result.status === "rejected" && result.reason.appCode === "rate_limited").length,
+    1,
+  );
+  assert.equal(await store.activePhotoCount(UID), MAX_PROFILE_PHOTO_COUNT);
 });
 
 test("finalizeProfilePhoto compensates orphan permanent object after metadata failure", async () => {
