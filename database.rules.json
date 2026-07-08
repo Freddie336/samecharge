@@ -1,6 +1,37 @@
 {
     "rules": {
         ".read": false,
-        ".write": false
+        ".write": false,
+        "presence": {
+            "$uid": {
+                ".read": false,
+                ".write": "auth != null && auth.uid == $uid",
+                ".validate": "newData.hasChildren(['online', 'lastSeenAt']) && (newData.child('online').val() == false || newData.hasChildren(['batteryLevel', 'batteryState', 'cityId']))",
+                "batteryLevel": {
+                    ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100 && newData.val() % 1 == 0"
+                },
+                "batteryState": {
+                    ".validate": "newData.isString() && (newData.val() == 'charging' || newData.val() == 'discharging' || newData.val() == 'full' || newData.val() == 'unknown')"
+                },
+                "cityId": {
+                    ".validate": "newData.val() == 'istanbul'"
+                },
+                "online": {
+                    ".validate": "newData.isBoolean()"
+                },
+                "lastSeenAt": {
+                    ".validate": "newData.isNumber()"
+                },
+                "profileEligible": {
+                    ".validate": "newData.isBoolean()"
+                },
+                "appVersion": {
+                    ".validate": "newData.isString() && newData.val().length <= 32"
+                },
+                "$other": {
+                    ".validate": false
+                }
+            }
+        }
     }
 }

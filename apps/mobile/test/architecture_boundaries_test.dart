@@ -70,6 +70,7 @@ void main() {
       expect(content.contains("'getAppBootstrap'"), isFalse);
       expect(content.contains("'completeOnboarding'"), isFalse);
       expect(content.contains("'finalizeProfilePhoto'"), isFalse);
+      expect(content.contains("'startDiscovery'"), isFalse);
     }
   });
 

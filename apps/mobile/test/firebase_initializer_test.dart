@@ -28,6 +28,16 @@ class FakeFirebaseAdapter implements FirebaseBootstrapAdapter {
   }
 
   @override
+  Future<void> configureDatabase() async {
+    calls.add('configureDatabase');
+  }
+
+  @override
+  Future<void> connectDatabaseEmulator(String host, int port) async {
+    calls.add('connectDatabaseEmulator:$host:$port');
+  }
+
+  @override
   Future<void> connectFunctionsEmulator(String host, int port) async {
     calls.add('connectFunctionsEmulator:$host:$port');
   }
@@ -69,6 +79,8 @@ void main() {
       expect(adapter.calls, [
         'initializeApp:demo-samecharge-mobile',
         'connectAuthEmulator:10.0.2.2:9099',
+        'configureDatabase',
+        'connectDatabaseEmulator:10.0.2.2:9000',
         'configureFunctions:europe-west1',
         'connectFunctionsEmulator:10.0.2.2:5001',
         'configureStorage',
@@ -100,6 +112,7 @@ void main() {
       expect(adapter.calls, [
         'initializeApp:samecharge-dev-freddie336',
         'activateDebugAppCheck',
+        'configureDatabase',
         'configureFunctions:europe-west1',
         'configureStorage',
         'services',

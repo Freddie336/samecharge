@@ -8,6 +8,7 @@ import '../../bootstrap/domain/bootstrap_state.dart';
 import '../../bootstrap/presentation/bootstrap_providers.dart';
 import '../../home/presentation/status_screens.dart';
 import '../../onboarding/presentation/onboarding_screen.dart';
+import '../../presence/presentation/presence_lifecycle_listener.dart';
 import '../../splash/presentation/splash_screen.dart';
 
 class RootGateScreen extends ConsumerWidget {
@@ -16,7 +17,9 @@ class RootGateScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final services = ref.watch(firebaseServicesProvider);
-    if (services.functions == null || services.storage == null) {
+    if (services.functions == null ||
+        services.database == null ||
+        services.storage == null) {
       return const SplashScreen();
     }
 
@@ -40,7 +43,11 @@ class RootGateScreen extends ConsumerWidget {
               child: const Text('Tekrar dene'),
             ),
           ),
-          data: (state) => _screenForState(context, ref, state),
+          data: (state) => PresenceLifecycleListener(
+            user: user,
+            bootstrap: state,
+            child: _screenForState(context, ref, state),
+          ),
         );
       },
     );
