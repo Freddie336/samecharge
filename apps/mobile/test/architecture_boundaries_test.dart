@@ -47,6 +47,32 @@ void main() {
     }
   });
 
+  test('presentation files do not hardcode callable names', () {
+    final presentationFiles = Directory('lib')
+        .listSync(recursive: true)
+        .whereType<File>()
+        .where((file) {
+          final normalizedPath = file.path.replaceAll(
+            '/',
+            Platform.pathSeparator,
+          );
+
+          return normalizedPath.endsWith('.dart') &&
+              normalizedPath.contains(
+                '${Platform.pathSeparator}presentation'
+                '${Platform.pathSeparator}',
+              );
+        });
+
+    for (final file in presentationFiles) {
+      final content = file.readAsStringSync();
+
+      expect(content.contains("'getAppBootstrap'"), isFalse);
+      expect(content.contains("'completeOnboarding'"), isFalse);
+      expect(content.contains("'finalizeProfilePhoto'"), isFalse);
+    }
+  });
+
   test(
     'mobile source does not contain prod project or credential material',
     () {

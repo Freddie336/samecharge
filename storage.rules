@@ -1,6 +1,36 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isSafeUploadId(uploadId) {
+      return uploadId.matches('^[A-Za-z0-9_-]{16,64}$');
+    }
+
+    function isSupportedImage() {
+      return request.resource != null &&
+        request.resource.size <= 5 * 1024 * 1024 &&
+        request.resource.contentType in [
+          'image/jpeg',
+          'image/png',
+          'image/webp'
+        ];
+    }
+
+    match /temp_uploads/{uid}/{uploadId} {
+      allow create, update: if isOwner(uid) &&
+        isSafeUploadId(uploadId) &&
+        isSupportedImage();
+      allow delete: if isOwner(uid) && isSafeUploadId(uploadId);
+      allow read, list: if false;
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
     }

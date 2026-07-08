@@ -1,5 +1,6 @@
 import { getAuth } from "firebase-admin/auth";
 import { Firestore, getFirestore, Transaction } from "firebase-admin/firestore";
+import { getStorage } from "firebase-admin/storage";
 import { AppError } from "../../callable/app-error";
 import { validateAdultBirthDate } from "./age-validation";
 import { createConsentRecordId } from "./consent-record-id";
@@ -16,6 +17,7 @@ import {
 } from "./onboarding-types";
 
 const ONBOARDING_REVISION_ID = "onboarding_initial";
+const FINALIZED_PHOTO_PATH_PATTERN = /^profile_photos\/[A-Za-z0-9_-]+\/[a-f0-9]{64}\.webp$/u;
 
 class AdminAuthUserReader {
   async getEmail(uid: string): Promise<string> {
@@ -57,10 +59,24 @@ class AdminOnboardingTransaction implements OnboardingTransaction {
       this.firestore.collection("profile_photos")
         .where("ownerId", "==", uid)
         .where("status", "in", FINALIZED_PHOTO_STATUSES)
-        .limit(1),
+        .limit(10),
     );
 
-    return !snapshot.empty;
+    for (const doc of snapshot.docs) {
+      const data = doc.data();
+      const storagePath = typeof data.storagePath === "string" ? data.storagePath : undefined;
+
+      if (!storagePath || !isServerOwnedFinalizedPhotoPath(uid, storagePath)) {
+        continue;
+      }
+
+      const [exists] = await getStorage().bucket().file(storagePath).exists();
+      if (exists) {
+        return true;
+      }
+    }
+
+    return false;
   }
 }
 
@@ -88,6 +104,11 @@ function pathFor(collection: string, uid: string): string {
 
 function revisionPath(uid: string): string {
   return `profile_revisions/${uid}/items/${ONBOARDING_REVISION_ID}`;
+}
+
+function isServerOwnedFinalizedPhotoPath(uid: string, storagePath: string): boolean {
+  return storagePath.startsWith(`profile_photos/${uid}/`) &&
+    FINALIZED_PHOTO_PATH_PATTERN.test(storagePath);
 }
 
 function consentRecordPath(uid: string, record: ConsentRecordInput): string {

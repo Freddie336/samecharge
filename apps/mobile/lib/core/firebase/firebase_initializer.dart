@@ -2,6 +2,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 
 import 'firebase_runtime_config.dart';
 import 'firebase_runtime_target.dart';
@@ -12,6 +13,8 @@ abstract class FirebaseBootstrapAdapter {
   Future<void> connectAuthEmulator(String host, int port);
   Future<void> configureFunctions(String region);
   Future<void> connectFunctionsEmulator(String host, int port);
+  Future<void> configureStorage();
+  Future<void> connectStorageEmulator(String host, int port);
   Future<void> activateDebugAppCheck();
   FirebaseServices services();
 }
@@ -20,9 +23,11 @@ class FirebaseSdkBootstrapAdapter implements FirebaseBootstrapAdapter {
   static bool _appInitialized = false;
   static bool _authEmulatorConnected = false;
   static bool _functionsEmulatorConnected = false;
+  static bool _storageEmulatorConnected = false;
   static bool _appCheckActivated = false;
 
   FirebaseFunctions? _functions;
+  FirebaseStorage? _storage;
 
   @override
   Future<void> initializeApp(FirebaseOptions options) async {
@@ -66,6 +71,26 @@ class FirebaseSdkBootstrapAdapter implements FirebaseBootstrapAdapter {
   }
 
   @override
+  Future<void> configureStorage() async {
+    _storage ??= FirebaseStorage.instance;
+  }
+
+  @override
+  Future<void> connectStorageEmulator(String host, int port) async {
+    if (_storageEmulatorConnected) {
+      return;
+    }
+
+    final storage = _storage;
+    if (storage == null) {
+      throw StateError('Storage must be configured before emulator attach.');
+    }
+
+    storage.useStorageEmulator(host, port);
+    _storageEmulatorConnected = true;
+  }
+
+  @override
   Future<void> activateDebugAppCheck() async {
     if (_appCheckActivated) {
       return;
@@ -79,7 +104,7 @@ class FirebaseSdkBootstrapAdapter implements FirebaseBootstrapAdapter {
 
   @override
   FirebaseServices services() {
-    return FirebaseServices(functions: _functions);
+    return FirebaseServices(functions: _functions, storage: _storage);
   }
 }
 
@@ -115,6 +140,11 @@ class FirebaseInitializer {
           config.emulatorHost,
           config.functionsPort,
         );
+        await adapter.configureStorage();
+        await adapter.connectStorageEmulator(
+          config.emulatorHost,
+          config.storagePort,
+        );
         await adapter.activateDebugAppCheck();
         return FirebaseInitializationResult(
           services: adapter.services(),
@@ -129,6 +159,7 @@ class FirebaseInitializer {
         await adapter.initializeApp(options);
         await adapter.activateDebugAppCheck();
         await adapter.configureFunctions(config.functionsRegion);
+        await adapter.configureStorage();
         return FirebaseInitializationResult(
           services: adapter.services(),
           initialized: true,
