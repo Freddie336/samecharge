@@ -20,7 +20,7 @@
                     ".validate": "newData.isBoolean()"
                 },
                 "lastSeenAt": {
-                    ".validate": "newData.isNumber()"
+                    ".validate": "newData.isNumber() && newData.val() >= now - 300000 && newData.val() <= now + 5000"
                 },
                 "profileEligible": {
                     ".validate": "newData.isBoolean()"

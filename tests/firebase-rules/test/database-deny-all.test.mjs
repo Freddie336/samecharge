@@ -127,6 +127,14 @@ await runDatabaseDeniedCase(
 );
 
 await runDatabaseDeniedCase(
+  'Realtime Database authenticated alice client is denied future lastSeenAt',
+  (testEnv) => testEnv.authenticatedContext('alice')
+    .database()
+    .ref('presence/alice')
+    .set(validPresence({ lastSeenAt: Date.now() + 60_000 })),
+);
+
+await runDatabaseDeniedCase(
   'Realtime Database authenticated alice client is denied extra sensitive fields',
   (testEnv) => testEnv.authenticatedContext('alice')
     .database()
