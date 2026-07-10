@@ -86,6 +86,16 @@ class AdminDiscoveryStore implements DiscoveryStore, DiscoveryDecisionStore {
     return snapshot.docs.map((doc) => profileFrom(doc.id, doc.data()));
   }
 
+  async listDecisionPairKeysForRequester(uid: string): Promise<Set<string>> {
+    const snapshot = await this.firestore.collection("discovery_decisions")
+      .where("requesterId", "==", uid)
+      .get();
+
+    return new Set(snapshot.docs
+      .map((doc) => doc.data().pairKey)
+      .filter((pairKey): pairKey is string => typeof pairKey === "string"));
+  }
+
   async writeDiscoverySession(write: DiscoverySessionWrite): Promise<void> {
     const batch = this.firestore.batch();
     const sessionRef = this.firestore.collection("discovery_sessions").doc(write.sessionId);
@@ -166,10 +176,14 @@ export async function startDiscoveryForUid(
 ): Promise<StartDiscoveryResponse> {
   const now = dependencies.now();
   const requester = await loadEligibleRequester(uid, dependencies.store, now);
-  const candidateProfiles = await dependencies.store.listApprovedProfiles(requester.profile.cityId);
+  const [candidateProfiles, decidedPairKeys] = await Promise.all([
+    dependencies.store.listApprovedProfiles(requester.profile.cityId),
+    dependencies.store.listDecisionPairKeysForRequester(uid),
+  ]);
   const candidates = await eligibleCandidates({
     requesterUid: uid,
     requesterPresence: requester.presence,
+    decidedPairKeys,
     profiles: candidateProfiles,
     requestedRange: input.requestedRange,
     pageSize: input.pageSize,
@@ -681,6 +695,7 @@ async function loadEligibleRequester(uid: string, store: DiscoveryStore, now: Da
 async function eligibleCandidates(options: {
   requesterUid: string;
   requesterPresence: PresenceRecord;
+  decidedPairKeys: Set<string>;
   profiles: DiscoveryProfileRecord[];
   requestedRange: DiscoveryRange;
   pageSize: number;
@@ -691,6 +706,10 @@ async function eligibleCandidates(options: {
 
   for (const profile of options.profiles) {
     if (profile.uid === options.requesterUid) {
+      continue;
+    }
+
+    if (options.decidedPairKeys.has(pairKeyFor(options.requesterUid, profile.uid))) {
       continue;
     }
 

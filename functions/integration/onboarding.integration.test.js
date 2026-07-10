@@ -346,6 +346,9 @@ test("integration: submitDiscoveryDecision pass consumes token without match", a
   assert.equal(JSON.stringify(tokenDocs.docs.map((doc) => doc.data())).includes(candidate.candidateToken), false);
   assert.equal(decisions.size, 1);
   assert.equal(matches.size, 0);
+
+  const rediscovery = await startDiscovery.run(request({ requestedRange: 0, pageSize: 10 }));
+  assert.equal(rediscovery.candidates.length, 0);
 });
 
 test("integration: submitDiscoveryDecision mutual likes create one sanitized match", async () => {

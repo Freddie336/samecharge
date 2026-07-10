@@ -118,6 +118,7 @@ export interface DiscoveryStore {
   getApprovedPhotos(uid: string): Promise<DiscoveryApprovedPhoto[]>;
   getPresence(uid: string): Promise<PresenceRecord | undefined>;
   listApprovedProfiles(cityId: typeof DISCOVERY_SUPPORTED_CITY_ID): Promise<DiscoveryProfileRecord[]>;
+  listDecisionPairKeysForRequester(uid: string): Promise<Set<string>>;
   writeDiscoverySession(write: DiscoverySessionWrite): Promise<void>;
 }
 
