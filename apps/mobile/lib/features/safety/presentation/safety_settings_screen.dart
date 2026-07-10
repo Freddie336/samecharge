@@ -19,9 +19,10 @@ class SafetySettingsScreen extends ConsumerWidget {
           const SizedBox(height: 16),
           ListTile(
             contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.delete_outline),
             title: const Text('Request account deletion'),
             subtitle: const Text(
-              'Your profile and discovery access will be disabled while the request is processed.',
+              'Your profile, discovery, and messaging access will be disabled while the request is processed.',
             ),
             trailing: const Icon(Icons.chevron_right),
             onTap: state.submitting
@@ -87,10 +88,24 @@ class _DeletionDialogState extends State<_DeletionDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('Request deletion'),
-      content: TextField(
-        key: const Key('delete-confirmation-field'),
-        controller: _confirmation,
-        decoration: const InputDecoration(labelText: 'Type DELETE_MY_ACCOUNT'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'This starts a deletion request. Some safety and legal records may be retained while policy review is pending.',
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              key: const Key('delete-confirmation-field'),
+              controller: _confirmation,
+              decoration: const InputDecoration(
+                labelText: 'Type DELETE_MY_ACCOUNT',
+              ),
+            ),
+          ],
+        ),
       ),
       actions: [
         TextButton(

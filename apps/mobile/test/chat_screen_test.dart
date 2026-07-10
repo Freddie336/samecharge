@@ -174,6 +174,20 @@ void main() {
     expect(find.text('Hello'), findsOneWidget);
   });
 
+  testWidgets('empty conversation state is safe and non-technical', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_harness(FakeChatRepository(matches: [_match()])));
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('match-match-1')));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byKey(const Key('empty-conversation-title')), findsOneWidget);
+    expect(find.textContaining('Firestore'), findsNothing);
+  });
+
   testWidgets('send button is disabled for empty text', (tester) async {
     await tester.pumpWidget(_harness(FakeChatRepository(matches: [_match()])));
     await tester.pump();
@@ -279,6 +293,28 @@ void main() {
     expect(safety.lastReportDescription, 'Please review');
   });
 
+  testWidgets('report dialog remains usable on small screens with large text', (
+    tester,
+  ) async {
+    await _setSmallScreen(tester);
+    await tester.pumpWidget(
+      _harness(FakeChatRepository(matches: [_match()]), textScale: 1.8),
+    );
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('match-match-1')));
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('chat-safety-menu-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('report-user-menu-item')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('report-description-field')), findsOneWidget);
+    expect(find.byKey(const Key('submit-report-button')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('block confirmation disables input after success', (
     tester,
   ) async {
@@ -338,7 +374,11 @@ void main() {
   });
 }
 
-Widget _harness(FakeChatRepository repo, {FakeSafetyRepository? safety}) {
+Widget _harness(
+  FakeChatRepository repo, {
+  FakeSafetyRepository? safety,
+  double textScale = 1,
+}) {
   return ProviderScope(
     overrides: [
       chatRepositoryProvider.overrideWithValue(repo),
@@ -346,7 +386,15 @@ Widget _harness(FakeChatRepository repo, {FakeSafetyRepository? safety}) {
         safety ?? FakeSafetyRepository(),
       ),
     ],
-    child: const MaterialApp(home: Scaffold(body: ChatScreen())),
+    child: MaterialApp(
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(
+          context,
+        ).copyWith(textScaler: TextScaler.linear(textScale)),
+        child: child!,
+      ),
+      home: const Scaffold(body: ChatScreen()),
+    ),
   );
 }
 
@@ -380,4 +428,11 @@ ChatMessage _message({required String text, bool mine = false}) {
     isMine: mine,
     pending: false,
   );
+}
+
+Future<void> _setSmallScreen(WidgetTester tester) async {
+  tester.view.physicalSize = const Size(320, 568);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
 }

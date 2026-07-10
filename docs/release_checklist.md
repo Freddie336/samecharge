@@ -78,3 +78,19 @@
 - **Awaiting:** legal review (all ToS, privacy, retention), App Check configuration (technical), store account setup
 - **Release blockers:** ⛔ Legal approval of all policy documents is mandatory. App Check enforcement must be active in production. Security Rules CI must pass.
 - **Last reviewed:** 2026-07-06
+
+---
+
+## PR12 Closed Beta Readiness Gate
+
+- [ ] `mobile`, `functions`, and `firebase-rules` CI are green on the release candidate commit.
+- [ ] Dev debug APK build passes.
+- [ ] Prod debug APK build passes while production Firebase remains disabled/fail-closed.
+- [ ] Manual APK smoke test in `docs/beta_test_checklist.md` is complete.
+- [ ] Privacy/legal checklist in `docs/privacy_legal_checklist.md` has no unacknowledged blocker.
+- [ ] Operations runbook in `docs/operations_runbook.md` is available to beta operators.
+- [ ] Known limitations in `docs/known_limitations.md` are reviewed before inviting testers.
+- [ ] No Firebase production deploy has been performed.
+- [ ] Production launch still requires explicit owner approval.
+- [ ] Google Play production publishing has not been performed.
+- [ ] PR #13 scope has not started.

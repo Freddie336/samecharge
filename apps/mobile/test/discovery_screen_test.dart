@@ -12,11 +12,13 @@ class FakeDiscoveryRepository implements DiscoveryRepository {
   FakeDiscoveryRepository({
     required this.batch,
     List<DiscoveryDecisionResult>? results,
+    this.startCompleter,
     this.submitCompleter,
   }) : results = QueueList(results ?? const [DiscoveryLiked()]);
 
   final DiscoveryBatch batch;
   final QueueList<DiscoveryDecisionResult> results;
+  final Completer<void>? startCompleter;
   final Completer<void>? submitCompleter;
   int submitCalls = 0;
 
@@ -25,6 +27,10 @@ class FakeDiscoveryRepository implements DiscoveryRepository {
     int requestedRange = 3,
     int pageSize = 10,
   }) async {
+    if (startCompleter != null) {
+      await startCompleter!.future;
+    }
+
     return batch;
   }
 
@@ -43,6 +49,22 @@ class FakeDiscoveryRepository implements DiscoveryRepository {
 }
 
 void main() {
+  testWidgets('loading state uses safe beta copy', (tester) async {
+    final completer = Completer<void>();
+    final repo = FakeDiscoveryRepository(
+      batch: _batch([]),
+      startCompleter: completer,
+    );
+
+    await tester.pumpWidget(_harness(repo));
+    await tester.pump();
+
+    expect(find.byKey(const Key('discovery-loading-copy')), findsOneWidget);
+    expect(find.textContaining('PlatformException'), findsNothing);
+    completer.complete();
+    await tester.pumpAndSettle();
+  });
+
   testWidgets('candidate card renders sanitized DTO fields', (tester) async {
     final repo = FakeDiscoveryRepository(batch: _batch([_candidate()]));
 
@@ -194,12 +216,35 @@ void main() {
     completer.complete();
     await tester.pumpAndSettle();
   });
+
+  testWidgets('empty discovery is safe on small screens with large text', (
+    tester,
+  ) async {
+    await _setSmallScreen(tester);
+    final repo = FakeDiscoveryRepository(batch: _batch([]));
+
+    await tester.pumpWidget(_harness(repo, textScale: 1.8));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byKey(const Key('empty-discovery-title')), findsOneWidget);
+    expect(find.text('Search again'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
 
-Widget _harness(FakeDiscoveryRepository repo) {
+Widget _harness(FakeDiscoveryRepository repo, {double textScale = 1}) {
   return ProviderScope(
     overrides: [discoveryRepositoryProvider.overrideWithValue(repo)],
-    child: const MaterialApp(home: DiscoveryScreen()),
+    child: MaterialApp(
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(
+          context,
+        ).copyWith(textScaler: TextScaler.linear(textScale)),
+        child: child!,
+      ),
+      home: const DiscoveryScreen(),
+    ),
   );
 }
 
@@ -235,4 +280,11 @@ class QueueList<T> {
   final List<T> _values;
 
   T removeFirst() => _values.removeAt(0);
+}
+
+Future<void> _setSmallScreen(WidgetTester tester) async {
+  tester.view.physicalSize = const Size(320, 568);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
 }
