@@ -128,13 +128,13 @@ class _MatchListView extends StatelessWidget {
           if (state.loadingMatches)
             const Expanded(child: Center(child: CircularProgressIndicator()))
           else if (state.matchListEmpty)
-            const Expanded(
-              child: Center(
-                child: Text(
-                  'No matches yet',
-                  key: Key('empty-matches-title'),
-                  textAlign: TextAlign.center,
-                ),
+            Expanded(
+              child: _EmptyChatState(
+                title: 'No matches yet',
+                message:
+                    'When a mutual like happens, your text-only chat starts here.',
+                titleKey: const Key('empty-matches-title'),
+                icon: Icons.favorite_border,
               ),
             )
           else
@@ -226,6 +226,15 @@ class _ChatDetailView extends StatelessWidget {
           ),
         if (state.loadingMessages)
           const Expanded(child: Center(child: CircularProgressIndicator()))
+        else if (state.messages.isEmpty)
+          const Expanded(
+            child: _EmptyChatState(
+              title: 'No messages yet',
+              message: 'Send a first message when this match is active.',
+              titleKey: Key('empty-conversation-title'),
+              icon: Icons.chat_bubble_outline,
+            ),
+          )
         else
           Expanded(
             child: ListView.builder(
@@ -281,6 +290,47 @@ class _ChatDetailView extends StatelessWidget {
   }
 }
 
+class _EmptyChatState extends StatelessWidget {
+  const _EmptyChatState({
+    required this.title,
+    required this.message,
+    required this.titleKey,
+    required this.icon,
+  });
+
+  final String title;
+  final String message;
+  final Key titleKey;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 380),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 40),
+              const SizedBox(height: 12),
+              Text(
+                title,
+                key: titleKey,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.headlineMedium,
+              ),
+              const SizedBox(height: 8),
+              Text(message, textAlign: TextAlign.center),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _Composer extends StatefulWidget {
   const _Composer({
     required this.controller,
@@ -308,38 +358,47 @@ class _ComposerState extends State<_Composer> {
         !widget.sending &&
         widget.controller.text.trim().isNotEmpty;
 
-    return Padding(
-      padding: const EdgeInsets.all(12),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              key: const Key('message-composer'),
-              controller: widget.controller,
-              enabled: widget.enabled,
-              minLines: 1,
-              maxLines: 4,
-              maxLength: 1000,
-              onChanged: (_) => setState(() {}),
-              decoration: InputDecoration(
-                hintText: widget.disabledReason ?? 'Message',
-                counterText: '',
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          12,
+          12,
+          12,
+          12 + MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: TextField(
+                key: const Key('message-composer'),
+                controller: widget.controller,
+                enabled: widget.enabled,
+                minLines: 1,
+                maxLines: 4,
+                maxLength: 1000,
+                onChanged: (_) => setState(() {}),
+                decoration: InputDecoration(
+                  hintText: widget.disabledReason ?? 'Message',
+                  counterText: '',
+                ),
               ),
             ),
-          ),
-          const SizedBox(width: 8),
-          IconButton.filled(
-            key: const Key('send-message-button'),
-            tooltip: 'Send',
-            onPressed: canTap ? widget.onSend : null,
-            icon: widget.sending
-                ? const SizedBox.square(
-                    dimension: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.send),
-          ),
-        ],
+            const SizedBox(width: 8),
+            IconButton.filled(
+              key: const Key('send-message-button'),
+              tooltip: 'Send',
+              onPressed: canTap ? widget.onSend : null,
+              icon: widget.sending
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.send),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -470,11 +529,15 @@ class _ReportDialogState extends State<_ReportDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('Report'),
-      content: TextField(
-        key: const Key('report-description-field'),
-        controller: _description,
-        maxLength: 1000,
-        decoration: const InputDecoration(labelText: 'Optional details'),
+      content: SingleChildScrollView(
+        child: TextField(
+          key: const Key('report-description-field'),
+          controller: _description,
+          maxLength: 1000,
+          minLines: 2,
+          maxLines: 5,
+          decoration: const InputDecoration(labelText: 'Optional details'),
+        ),
       ),
       actions: [
         TextButton(
@@ -502,7 +565,7 @@ Future<void> _confirmAction({
     context: context,
     builder: (context) => AlertDialog(
       title: Text(title),
-      content: Text(message),
+      content: SingleChildScrollView(child: Text(message)),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(false),

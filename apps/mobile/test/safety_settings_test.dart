@@ -101,11 +101,47 @@ void main() {
     expect(find.byKey(const Key('reauthentication-help')), findsOneWidget);
     expect(find.textContaining('erased'), findsNothing);
   });
+
+  testWidgets(
+    'account deletion dialog is safe on small screens with large text',
+    (tester) async {
+      await _setSmallScreen(tester);
+      await tester.pumpWidget(_harness(FakeSafetyRepository(), textScale: 1.8));
+      await tester.tap(find.text('Request account deletion'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('delete-confirmation-field')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('confirm-delete-account-button')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('device/cache'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
 
-Widget _harness(FakeSafetyRepository repo) {
+Widget _harness(FakeSafetyRepository repo, {double textScale = 1}) {
   return ProviderScope(
     overrides: [safetyRepositoryProvider.overrideWithValue(repo)],
-    child: const MaterialApp(home: Scaffold(body: SafetySettingsScreen())),
+    child: MaterialApp(
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(
+          context,
+        ).copyWith(textScaler: TextScaler.linear(textScale)),
+        child: child!,
+      ),
+      home: const Scaffold(body: SafetySettingsScreen()),
+    ),
   );
+}
+
+Future<void> _setSmallScreen(WidgetTester tester) async {
+  tester.view.physicalSize = const Size(320, 568);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
 }

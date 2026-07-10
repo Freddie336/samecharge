@@ -57,9 +57,7 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
               ),
               const SizedBox(height: 16),
               if (state.loading)
-                const Expanded(
-                  child: Center(child: CircularProgressIndicator()),
-                )
+                const Expanded(child: _DiscoveryLoading())
               else if (state.match != null)
                 Expanded(
                   child: _MatchView(
@@ -278,28 +276,60 @@ class _EmptyDiscovery extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text(
-          'No candidates right now',
-          key: const Key('empty-discovery-title'),
-          textAlign: TextAlign.center,
-          style: Theme.of(context).textTheme.headlineMedium,
+    return Center(
+      child: SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Icon(Icons.search_off, size: 44),
+              const SizedBox(height: 12),
+              Text(
+                'No candidates right now',
+                key: const Key('empty-discovery-title'),
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.headlineMedium,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                errorMessage ??
+                    'Discovery only shows eligible people with fresh presence. Try again soon.',
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              FilledButton.icon(
+                onPressed: onRefresh,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Search again'),
+              ),
+            ],
+          ),
         ),
-        const SizedBox(height: 8),
-        Text(
-          errorMessage ?? 'Try again soon when fresh presence changes.',
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 24),
-        FilledButton.icon(
-          onPressed: onRefresh,
-          icon: const Icon(Icons.refresh),
-          label: const Text('Search again'),
-        ),
-      ],
+      ),
+    );
+  }
+}
+
+class _DiscoveryLoading extends StatelessWidget {
+  const _DiscoveryLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CircularProgressIndicator(),
+          SizedBox(height: 16),
+          Text(
+            'Looking for fresh matches...',
+            key: Key('discovery-loading-copy'),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
     );
   }
 }
