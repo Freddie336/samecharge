@@ -6,7 +6,7 @@ import '../../auth/presentation/auth_controller.dart';
 import '../../auth/presentation/auth_screen.dart';
 import '../../bootstrap/domain/bootstrap_state.dart';
 import '../../bootstrap/presentation/bootstrap_providers.dart';
-import '../../discovery/presentation/discovery_screen.dart';
+import '../../chat/presentation/chat_home_screen.dart';
 import '../../home/presentation/status_screens.dart';
 import '../../onboarding/presentation/onboarding_screen.dart';
 import '../../presence/presentation/presence_lifecycle_listener.dart';
@@ -18,7 +18,8 @@ class RootGateScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final services = ref.watch(firebaseServicesProvider);
-    if (services.functions == null ||
+    if (services.firestore == null ||
+        services.functions == null ||
         services.database == null ||
         services.storage == null) {
       return const SplashScreen();
@@ -75,7 +76,7 @@ Widget _screenForState(BootstrapState state) {
   }
 
   return switch (state.profileStatus) {
-    ProfileStatus.approved => const DiscoveryScreen(),
+    ProfileStatus.approved => const ChatHomeScreen(),
     ProfileStatus.rejected => const StatusScreen(
       title: 'Profile rejected',
       message: 'You will need to update your profile information.',

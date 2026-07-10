@@ -72,6 +72,7 @@ void main() {
 
     expect(config.emulatorHost, '10.0.2.2');
     expect(config.authPort, 9099);
+    expect(config.firestorePort, 8080);
     expect(config.functionsPort, 5001);
     expect(config.functionsRegion, 'europe-west1');
     expect(config.emulatorProjectId, startsWith('demo-'));
