@@ -1,6 +1,26 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isMatchMember(matchId) {
+      return isSignedIn() &&
+        request.auth.uid in get(/databases/$(database)/documents/matches/$(matchId)).data.memberIds;
+    }
+
+    match /matches/{matchId} {
+      allow get, list: if isSignedIn() && request.auth.uid in resource.data.memberIds;
+      allow create, update, delete: if false;
+
+      match /messages/{messageId} {
+        allow get, list: if isMatchMember(matchId) &&
+          get(/databases/$(database)/documents/matches/$(matchId)).data.status == "active";
+        allow create, update, delete: if false;
+      }
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

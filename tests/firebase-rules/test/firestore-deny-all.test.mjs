@@ -1,5 +1,5 @@
 import { test } from 'node:test';
-import { assertFails } from '@firebase/rules-unit-testing';
+import { assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import {
   cleanupRulesTestEnvironment,
   createRulesTestEnvironment,
@@ -95,8 +95,106 @@ await runFirestoreDeniedCase(
 await runFirestoreDeniedCase(
   'Firestore authenticated alice client is denied listing match documents',
   (testEnv) => testEnv.authenticatedContext('alice').firestore().collection('matches').get(),
-  (db) => db.doc('matches/alice_bob').set({ memberIds: ['alice', 'bob'] }),
+  (db) => Promise.all([
+    db.doc('matches/alice_bob').set({ memberIds: ['alice', 'bob'], status: 'active' }),
+    db.doc('matches/carol_dave').set({ memberIds: ['carol', 'dave'], status: 'active' }),
+  ]),
 );
+
+test('Firestore authenticated member can read only their own match query', async () => {
+  const testEnv = await createRulesTestEnvironment();
+
+  try {
+    await withSeededFirestore(testEnv, (db) => Promise.all([
+      db.doc('matches/alice_bob').set({
+        memberIds: ['alice', 'bob'],
+        status: 'active',
+        messagingEnabled: true,
+      }),
+      db.doc('matches/carol_dave').set({
+        memberIds: ['carol', 'dave'],
+        status: 'active',
+        messagingEnabled: true,
+      }),
+    ]));
+
+    await assertSucceeds(
+      testEnv.authenticatedContext('alice')
+        .firestore()
+        .collection('matches')
+        .where('memberIds', 'array-contains', 'alice')
+        .get(),
+    );
+    await assertFails(
+      testEnv.authenticatedContext('alice')
+        .firestore()
+        .doc('matches/carol_dave')
+        .get(),
+    );
+  } finally {
+    await cleanupRulesTestEnvironment(testEnv);
+  }
+});
+
+test('Firestore match members can read active match messages only', async () => {
+  const testEnv = await createRulesTestEnvironment();
+
+  try {
+    await withSeededFirestore(testEnv, (db) => Promise.all([
+      db.doc('matches/alice_bob').set({
+        memberIds: ['alice', 'bob'],
+        status: 'active',
+        messagingEnabled: true,
+      }),
+      db.doc('matches/alice_bob/messages/message-1').set({
+        senderId: 'alice',
+        type: 'text',
+        text: 'Merhaba',
+      }),
+      db.doc('matches/carol_dave').set({
+        memberIds: ['carol', 'dave'],
+        status: 'active',
+        messagingEnabled: true,
+      }),
+      db.doc('matches/carol_dave/messages/message-1').set({
+        senderId: 'carol',
+        type: 'text',
+        text: 'Secret',
+      }),
+      db.doc('matches/alice_inactive').set({
+        memberIds: ['alice', 'erin'],
+        status: 'inactive',
+        messagingEnabled: false,
+      }),
+      db.doc('matches/alice_inactive/messages/message-1').set({
+        senderId: 'erin',
+        type: 'text',
+        text: 'Closed',
+      }),
+    ]));
+
+    await assertSucceeds(
+      testEnv.authenticatedContext('alice')
+        .firestore()
+        .collection('matches/alice_bob/messages')
+        .get(),
+    );
+    await assertFails(
+      testEnv.authenticatedContext('alice')
+        .firestore()
+        .collection('matches/carol_dave/messages')
+        .get(),
+    );
+    await assertFails(
+      testEnv.authenticatedContext('alice')
+        .firestore()
+        .collection('matches/alice_inactive/messages')
+        .get(),
+    );
+  } finally {
+    await cleanupRulesTestEnvironment(testEnv);
+  }
+});
 
 for (const path of [
   'discovery_sessions/alice-session',
@@ -122,4 +220,35 @@ await runFirestoreDeniedCase(
     tokenHash: 'hash',
     used: false,
   }),
+);
+
+await runFirestoreDeniedCase(
+  'Firestore authenticated alice client is denied creating match messages directly',
+  (testEnv) => testEnv.authenticatedContext('alice')
+    .firestore()
+    .doc('matches/alice_bob/messages/message-2')
+    .set({ senderId: 'alice', text: 'Direct write' }),
+  (db) => db.doc('matches/alice_bob').set({
+    memberIds: ['alice', 'bob'],
+    status: 'active',
+  }),
+);
+
+await runFirestoreDeniedCase(
+  'Firestore authenticated alice client is denied updating server-owned message fields',
+  (testEnv) => testEnv.authenticatedContext('alice')
+    .firestore()
+    .doc('matches/alice_bob/messages/message-1')
+    .update({ text: 'Tampered' }),
+  (db) => Promise.all([
+    db.doc('matches/alice_bob').set({
+      memberIds: ['alice', 'bob'],
+      status: 'active',
+    }),
+    db.doc('matches/alice_bob/messages/message-1').set({
+      senderId: 'alice',
+      type: 'text',
+      text: 'Original',
+    }),
+  ]),
 );

@@ -6,19 +6,25 @@ const {
   completeOnboarding,
   finalizeProfilePhoto,
   getAppBootstrap,
+  markMatchRead,
+  sendMessage,
+  setMatchMuted,
   startDiscovery,
   submitDiscoveryDecision,
 } = require("../lib/index");
 const { createConsentRecordId } = require("../lib/features/onboarding/consent-record-id");
 const { hashCandidateToken } = require("../lib/features/discovery/discovery-service");
+const { chatTestExports } = require("../lib/features/chat/chat-service");
 
 const auth = admin.auth();
 const firestore = admin.firestore();
 const database = admin.database();
 const bucket = admin.storage().bucket();
+const { messageIdFor } = chatTestExports;
 let testCounter = 0;
 let currentUid = "alice-0";
 let currentEmail = "alice-0@example.invalid";
+const chatMatchId = "b".repeat(64);
 
 function request(data, uid = currentUid) {
   return {
@@ -166,6 +172,25 @@ async function seedFinalizedPhoto(uid = currentUid) {
   });
 }
 
+async function seedChatMatch(overrides = {}) {
+  await firestore.collection("matches").doc(overrides.matchId ?? chatMatchId).set({
+    memberIds: overrides.memberIds ?? [currentUid, "bob-chat"].sort(),
+    status: overrides.status ?? "active",
+    messagingEnabled: overrides.messagingEnabled ?? true,
+    blockedBy: Object.prototype.hasOwnProperty.call(overrides, "blockedBy") ?
+      overrides.blockedBy :
+      null,
+    lastMessageAt: null,
+    lastMessagePreview: null,
+    unreadCounts: overrides.unreadCounts ?? {
+      [currentUid]: 0,
+      "bob-chat": 0,
+    },
+    mutedBy: overrides.mutedBy ?? {},
+    lastReadAt: overrides.lastReadAt ?? {},
+  });
+}
+
 async function consentRecordCount(uid = currentUid) {
   const snapshot = await firestore.collection("consent_history").doc(uid).collection("records").get();
   return snapshot.size;
@@ -198,17 +223,23 @@ test.after(() => {
   database.goOffline();
 });
 
-test("integration: exported callable count is exactly five", () => {
+test("integration: exported callable count is exactly eight", () => {
   assert.deepEqual(Object.keys(require("../lib/index")).sort(), [
     "completeOnboarding",
     "finalizeProfilePhoto",
     "getAppBootstrap",
+    "markMatchRead",
+    "sendMessage",
+    "setMatchMuted",
     "startDiscovery",
     "submitDiscoveryDecision",
   ]);
   assert.equal(typeof completeOnboarding.run, "function");
   assert.equal(typeof finalizeProfilePhoto.run, "function");
   assert.equal(typeof getAppBootstrap.run, "function");
+  assert.equal(typeof markMatchRead.run, "function");
+  assert.equal(typeof sendMessage.run, "function");
+  assert.equal(typeof setMatchMuted.run, "function");
   assert.equal(typeof startDiscovery.run, "function");
   assert.equal(typeof submitDiscoveryDecision.run, "function");
 });
@@ -235,6 +266,28 @@ test("integration: secure boundary rejects unauthenticated or missing App Check 
       auth: undefined,
     }),
     (error) => error.details.code === "unauthenticated",
+  );
+  await assert.rejects(
+    () => sendMessage.run({
+      ...request({
+        matchId: chatMatchId,
+        clientMessageId: "client-message-1",
+        text: "Merhaba",
+      }),
+      auth: undefined,
+    }),
+    (error) => error.details.code === "unauthenticated",
+  );
+  await assert.rejects(
+    () => sendMessage.run({
+      ...request({
+        matchId: chatMatchId,
+        clientMessageId: "client-message-1",
+        text: "Merhaba",
+      }),
+      app: undefined,
+    }),
+    (error) => error.details.code === "app_check_required",
   );
 });
 
@@ -268,6 +321,142 @@ test("integration: startDiscovery rejects invalid payload and stale presence", a
     })),
     (error) => error.details.code === "input_invalid",
   );
+  await assert.rejects(
+    () => sendMessage.run(request({
+      matchId: chatMatchId,
+      clientMessageId: "client-message-1",
+      text: "Merhaba",
+      senderId: "mallory",
+    })),
+    (error) => error.details.code === "input_invalid",
+  );
+  await assert.rejects(
+    () => sendMessage.run(request({
+      matchId: chatMatchId,
+      clientMessageId: "client-message-1",
+      text: "   ",
+    })),
+    (error) => error.details.code === "input_invalid",
+  );
+  await assert.rejects(
+    () => sendMessage.run(request({
+      matchId: chatMatchId,
+      clientMessageId: "client-message-1",
+      text: "a".repeat(1001),
+    })),
+    (error) => error.details.code === "input_invalid",
+  );
+});
+
+test("integration: sendMessage creates one text message and is idempotent", async () => {
+  await clearFirestore();
+  await seedChatMatch();
+
+  const input = {
+    matchId: chatMatchId,
+    clientMessageId: "client-message-1",
+    text: "  Merhaba\u0000   Bob  ",
+  };
+  const result = await sendMessage.run(request(input));
+  const retry = await sendMessage.run(request(input));
+  const match = (await firestore.collection("matches").doc(chatMatchId).get()).data();
+  const messages = await firestore.collection("matches")
+    .doc(chatMatchId)
+    .collection("messages")
+    .get();
+  const message = messages.docs[0].data();
+
+  assert.equal(result.status, "sent");
+  assert.equal(result.messageId, messageIdFor(currentUid, input.clientMessageId));
+  assert.equal(result.text, "Merhaba Bob");
+  assert.deepEqual(retry, result);
+  assert.equal(messages.size, 1);
+  assert.equal(message.senderId, currentUid);
+  assert.equal(message.type, "text");
+  assert.equal(message.text, "Merhaba Bob");
+  assert.equal(message.moderationStatus, "clean");
+  assert.equal(match.lastMessagePreview, "Merhaba Bob");
+  assert.equal(match.unreadCounts["bob-chat"], 1);
+  assert.equal(JSON.stringify(result).includes(currentEmail), false);
+
+  await assert.rejects(
+    () => sendMessage.run(request({
+      ...input,
+      text: "Different text",
+    })),
+    (error) => error.details.code === "already_exists",
+  );
+  const afterConflict = await firestore.collection("matches")
+    .doc(chatMatchId)
+    .collection("messages")
+    .get();
+  assert.equal(afterConflict.size, 1);
+  assert.equal((await firestore.collection("matches").doc(chatMatchId).get()).data()
+    .unreadCounts["bob-chat"], 1);
+});
+
+test("integration: sendMessage rejects non-member and disabled match states", async () => {
+  await clearFirestore();
+  await seedChatMatch();
+  await assert.rejects(
+    () => sendMessage.run(request({
+      matchId: chatMatchId,
+      clientMessageId: "client-message-1",
+      text: "Merhaba",
+    }, "mallory")),
+    (error) => error.details.code === "permission_denied",
+  );
+
+  for (const [overrides, code] of [
+    [{ status: "inactive" }, "match_not_active"],
+    [{ messagingEnabled: false }, "messaging_disabled"],
+    [{ blockedBy: "bob-chat" }, "match_not_active"],
+  ]) {
+    await clearFirestore();
+    await seedChatMatch(overrides);
+    await assert.rejects(
+      () => sendMessage.run(request({
+        matchId: chatMatchId,
+        clientMessageId: "client-message-1",
+        text: "Merhaba",
+      })),
+      (error) => error.details.code === code,
+    );
+  }
+});
+
+test("integration: markMatchRead and setMatchMuted are member-only", async () => {
+  await clearFirestore();
+  await seedChatMatch({ unreadCounts: { [currentUid]: 2, "bob-chat": 0 } });
+
+  await assert.rejects(
+    () => markMatchRead.run(request({ matchId: chatMatchId }, "mallory")),
+    (error) => error.details.code === "permission_denied",
+  );
+  assert.deepEqual(await markMatchRead.run(request({ matchId: chatMatchId })), {
+    status: "read",
+  });
+
+  let match = (await firestore.collection("matches").doc(chatMatchId).get()).data();
+  assert.equal(match.unreadCounts[currentUid], 0);
+  assert.ok(match.lastReadAt[currentUid]);
+
+  await assert.rejects(
+    () => setMatchMuted.run(request({ matchId: chatMatchId, muted: true }, "mallory")),
+    (error) => error.details.code === "permission_denied",
+  );
+  assert.deepEqual(await setMatchMuted.run(request({
+    matchId: chatMatchId,
+    muted: true,
+  })), {
+    status: "muted",
+    muted: true,
+  });
+
+  match = (await firestore.collection("matches").doc(chatMatchId).get()).data();
+  assert.equal(match.mutedBy[currentUid], true);
+  assert.equal(match.mutedBy["bob-chat"], undefined);
+  assert.equal(match.messagingEnabled, true);
 });
 
 test("integration: startDiscovery accepts fresh presence and stores hashed candidate tokens", async () => {

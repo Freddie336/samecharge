@@ -33,6 +33,16 @@ class FakeFirebaseAdapter implements FirebaseBootstrapAdapter {
   }
 
   @override
+  Future<void> configureFirestore() async {
+    calls.add('configureFirestore');
+  }
+
+  @override
+  Future<void> connectFirestoreEmulator(String host, int port) async {
+    calls.add('connectFirestoreEmulator:$host:$port');
+  }
+
+  @override
   Future<void> connectDatabaseEmulator(String host, int port) async {
     calls.add('connectDatabaseEmulator:$host:$port');
   }
@@ -81,6 +91,8 @@ void main() {
         'connectAuthEmulator:10.0.2.2:9099',
         'configureDatabase',
         'connectDatabaseEmulator:10.0.2.2:9000',
+        'configureFirestore',
+        'connectFirestoreEmulator:10.0.2.2:8080',
         'configureFunctions:europe-west1',
         'connectFunctionsEmulator:10.0.2.2:5001',
         'configureStorage',
@@ -113,6 +125,7 @@ void main() {
         'initializeApp:samecharge-dev-freddie336',
         'activateDebugAppCheck',
         'configureDatabase',
+        'configureFirestore',
         'configureFunctions:europe-west1',
         'configureStorage',
         'services',

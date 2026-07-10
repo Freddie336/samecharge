@@ -1,4 +1,5 @@
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -13,6 +14,8 @@ abstract class FirebaseBootstrapAdapter {
   Future<void> initializeApp(FirebaseOptions options);
   Future<void> connectAuthEmulator(String host, int port);
   Future<void> configureDatabase();
+  Future<void> configureFirestore();
+  Future<void> connectFirestoreEmulator(String host, int port);
   Future<void> connectDatabaseEmulator(String host, int port);
   Future<void> configureFunctions(String region);
   Future<void> connectFunctionsEmulator(String host, int port);
@@ -26,11 +29,13 @@ class FirebaseSdkBootstrapAdapter implements FirebaseBootstrapAdapter {
   static bool _appInitialized = false;
   static bool _authEmulatorConnected = false;
   static bool _databaseEmulatorConnected = false;
+  static bool _firestoreEmulatorConnected = false;
   static bool _functionsEmulatorConnected = false;
   static bool _storageEmulatorConnected = false;
   static bool _appCheckActivated = false;
 
   FirebaseDatabase? _database;
+  FirebaseFirestore? _firestore;
   FirebaseFunctions? _functions;
   FirebaseStorage? _storage;
 
@@ -58,6 +63,26 @@ class FirebaseSdkBootstrapAdapter implements FirebaseBootstrapAdapter {
   @override
   Future<void> configureDatabase() async {
     _database ??= FirebaseDatabase.instance;
+  }
+
+  @override
+  Future<void> configureFirestore() async {
+    _firestore ??= FirebaseFirestore.instance;
+  }
+
+  @override
+  Future<void> connectFirestoreEmulator(String host, int port) async {
+    if (_firestoreEmulatorConnected) {
+      return;
+    }
+
+    final firestore = _firestore;
+    if (firestore == null) {
+      throw StateError('Firestore must be configured before emulator attach.');
+    }
+
+    firestore.useFirestoreEmulator(host, port);
+    _firestoreEmulatorConnected = true;
   }
 
   @override
@@ -130,6 +155,7 @@ class FirebaseSdkBootstrapAdapter implements FirebaseBootstrapAdapter {
   @override
   FirebaseServices services() {
     return FirebaseServices(
+      firestore: _firestore,
       functions: _functions,
       database: _database,
       storage: _storage,
@@ -169,6 +195,11 @@ class FirebaseInitializer {
           config.emulatorHost,
           config.databasePort,
         );
+        await adapter.configureFirestore();
+        await adapter.connectFirestoreEmulator(
+          config.emulatorHost,
+          config.firestorePort,
+        );
         await adapter.configureFunctions(config.functionsRegion);
         await adapter.connectFunctionsEmulator(
           config.emulatorHost,
@@ -193,6 +224,7 @@ class FirebaseInitializer {
         await adapter.initializeApp(options);
         await adapter.activateDebugAppCheck();
         await adapter.configureDatabase();
+        await adapter.configureFirestore();
         await adapter.configureFunctions(config.functionsRegion);
         await adapter.configureStorage();
         return FirebaseInitializationResult(

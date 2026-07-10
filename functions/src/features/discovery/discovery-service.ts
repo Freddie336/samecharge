@@ -413,6 +413,12 @@ async function submitDecisionTransaction(options: {
   }
 
   const matchedAt = options.now.toISOString();
+  const requester = await loadDecisionCandidate(
+    options.firestore,
+    options.transaction,
+    options.uid,
+    options.now,
+  );
   assertMatchCanBeActive(existingMatch.data());
   if (!existingMatch.exists) {
     const [memberA, memberB] = [options.uid, token.candidateId].sort();
@@ -427,6 +433,10 @@ async function submitDecisionTransaction(options: {
       matchedBatteryLevelB: batteryLevelForMember(memberB, options.uid, token),
       matchedBatteryStateA: batteryStateForMember(memberA, options.uid, token),
       matchedBatteryStateB: batteryStateForMember(memberB, options.uid, token),
+      memberPreviews: {
+        [options.uid]: matchMemberPreview(requester, options.now),
+        [token.candidateId]: matchMemberPreview(candidate, options.now),
+      },
     });
   }
 
@@ -632,6 +642,14 @@ function matchedResponse(
       age: ageFromBirthDate(candidate.privateData.birthDate, now),
       photoRefs: candidate.photos.map((photo) => ({ photoId: photo.photoId })),
     },
+  };
+}
+
+function matchMemberPreview(candidate: DecisionCandidate, now: Date) {
+  return {
+    displayName: candidate.profile.displayName,
+    age: ageFromBirthDate(candidate.privateData.birthDate, now),
+    photoRefs: candidate.photos.map((photo) => ({ photoId: photo.photoId })),
   };
 }
 

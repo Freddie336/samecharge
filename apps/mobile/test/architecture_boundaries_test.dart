@@ -72,6 +72,9 @@ void main() {
       expect(content.contains("'finalizeProfilePhoto'"), isFalse);
       expect(content.contains("'startDiscovery'"), isFalse);
       expect(content.contains("'submitDiscoveryDecision'"), isFalse);
+      expect(content.contains("'sendMessage'"), isFalse);
+      expect(content.contains("'markMatchRead'"), isFalse);
+      expect(content.contains("'setMatchMuted'"), isFalse);
     }
   });
 
