@@ -6,6 +6,7 @@ import '../../auth/presentation/auth_controller.dart';
 import '../../auth/presentation/auth_screen.dart';
 import '../../bootstrap/domain/bootstrap_state.dart';
 import '../../bootstrap/presentation/bootstrap_providers.dart';
+import '../../discovery/presentation/discovery_screen.dart';
 import '../../home/presentation/status_screens.dart';
 import '../../onboarding/presentation/onboarding_screen.dart';
 import '../../presence/presentation/presence_lifecycle_listener.dart';
@@ -36,17 +37,17 @@ class RootGateScreen extends ConsumerWidget {
         return bootstrap.when(
           loading: () => const _LoadingScreen(),
           error: (error, _) => StatusScreen(
-            title: 'Bağlantı kurulamadı',
+            title: 'Connection failed',
             message: '$error',
             action: FilledButton(
               onPressed: () => ref.invalidate(bootstrapStateProvider),
-              child: const Text('Tekrar dene'),
+              child: const Text('Try again'),
             ),
           ),
           data: (state) => PresenceLifecycleListener(
             user: user,
             bootstrap: state,
-            child: _screenForState(context, ref, state),
+            child: _screenForState(state),
           ),
         );
       },
@@ -54,22 +55,18 @@ class RootGateScreen extends ConsumerWidget {
   }
 }
 
-Widget _screenForState(
-  BuildContext context,
-  WidgetRef ref,
-  BootstrapState state,
-) {
+Widget _screenForState(BootstrapState state) {
   if (state.accountStatus == PublicAccountStatus.suspended) {
     return const StatusScreen(
-      title: 'Hesap askıda',
-      message: 'Bu hesap şu anda kullanılamıyor.',
+      title: 'Account suspended',
+      message: 'This account is not available right now.',
     );
   }
 
   if (state.accountStatus == PublicAccountStatus.deletionPending) {
     return const StatusScreen(
-      title: 'Silme işlemi bekliyor',
-      message: 'Hesap silme süreci devam ediyor.',
+      title: 'Deletion pending',
+      message: 'Account deletion is still in progress.',
     );
   }
 
@@ -78,21 +75,18 @@ Widget _screenForState(
   }
 
   return switch (state.profileStatus) {
-    ProfileStatus.approved => const StatusScreen(
-      title: 'SameCharge',
-      message: 'Profilin hazır.',
-    ),
+    ProfileStatus.approved => const DiscoveryScreen(),
     ProfileStatus.rejected => const StatusScreen(
-      title: 'Profil reddedildi',
-      message: 'Profil bilgilerini güncellemen gerekecek.',
+      title: 'Profile rejected',
+      message: 'You will need to update your profile information.',
     ),
     ProfileStatus.needsReview => const StatusScreen(
-      title: 'Tekrar inceleme',
-      message: 'Profilin ek inceleme bekliyor.',
+      title: 'Extra review',
+      message: 'Your profile is waiting for another review.',
     ),
     _ => const StatusScreen(
-      title: 'Profil incelemede',
-      message: 'Fotoğraf ve profil onayı bekleniyor.',
+      title: 'Profile in review',
+      message: 'Your photo and profile approval is pending.',
     ),
   };
 }

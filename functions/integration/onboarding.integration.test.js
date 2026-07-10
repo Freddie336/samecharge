@@ -2,7 +2,13 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const admin = require("firebase-admin");
 const sharp = require("sharp");
-const { completeOnboarding, finalizeProfilePhoto, getAppBootstrap, startDiscovery } = require("../lib/index");
+const {
+  completeOnboarding,
+  finalizeProfilePhoto,
+  getAppBootstrap,
+  startDiscovery,
+  submitDiscoveryDecision,
+} = require("../lib/index");
 const { createConsentRecordId } = require("../lib/features/onboarding/consent-record-id");
 const { hashCandidateToken } = require("../lib/features/discovery/discovery-service");
 
@@ -192,17 +198,19 @@ test.after(() => {
   database.goOffline();
 });
 
-test("integration: exported callable count is exactly three", () => {
+test("integration: exported callable count is exactly five", () => {
   assert.deepEqual(Object.keys(require("../lib/index")).sort(), [
     "completeOnboarding",
     "finalizeProfilePhoto",
     "getAppBootstrap",
     "startDiscovery",
+    "submitDiscoveryDecision",
   ]);
   assert.equal(typeof completeOnboarding.run, "function");
   assert.equal(typeof finalizeProfilePhoto.run, "function");
   assert.equal(typeof getAppBootstrap.run, "function");
   assert.equal(typeof startDiscovery.run, "function");
+  assert.equal(typeof submitDiscoveryDecision.run, "function");
 });
 
 test("integration: secure boundary rejects unauthenticated or missing App Check context", async () => {
@@ -216,6 +224,16 @@ test("integration: secure boundary rejects unauthenticated or missing App Check 
   );
   await assert.rejects(
     () => startDiscovery.run({ ...request({ requestedRange: 0, pageSize: 10 }), auth: undefined }),
+    (error) => error.details.code === "unauthenticated",
+  );
+  await assert.rejects(
+    () => submitDiscoveryDecision.run({
+      ...request({
+        candidateToken: "opaque-token-000000000000000000000000",
+        decision: "like",
+      }),
+      auth: undefined,
+    }),
     (error) => error.details.code === "unauthenticated",
   );
 });
@@ -234,6 +252,21 @@ test("integration: startDiscovery rejects invalid payload and stale presence", a
   await assert.rejects(
     () => startDiscovery.run(request({ requestedRange: 0, pageSize: 10 })),
     (error) => error.details.code === "profile_not_eligible",
+  );
+  await assert.rejects(
+    () => submitDiscoveryDecision.run(request({
+      candidateToken: "opaque-token-000000000000000000000000",
+      decision: "super-like",
+    })),
+    (error) => error.details.code === "input_invalid",
+  );
+  await assert.rejects(
+    () => submitDiscoveryDecision.run(request({
+      candidateToken: "opaque-token-000000000000000000000000",
+      decision: "like",
+      candidateId: "bob-discovery",
+    })),
+    (error) => error.details.code === "input_invalid",
   );
 });
 
@@ -278,6 +311,95 @@ test("integration: startDiscovery accepts fresh presence and stores hashed candi
   assert.equal(candidates.size, 2);
   assert.ok(firstTokenDoc);
   assert.equal(JSON.stringify(candidates.docs.map((doc) => doc.data())).includes(result.candidates[0].candidateToken), false);
+});
+
+test("integration: submitDiscoveryDecision pass consumes token without match", async () => {
+  await clearFirestore();
+  await clearDatabase();
+  await seedDiscoveryUser(currentUid, {
+    displayName: "Alice",
+    batteryLevel: 77,
+  });
+  await seedDiscoveryUser("bob-pass", {
+    displayName: "Bob",
+    batteryLevel: 77,
+  });
+
+  const discovery = await startDiscovery.run(request({ requestedRange: 0, pageSize: 10 }));
+  const candidate = discovery.candidates[0];
+  const result = await submitDiscoveryDecision.run(request({
+    candidateToken: candidate.candidateToken,
+    decision: "pass",
+  }));
+  const retry = await submitDiscoveryDecision.run(request({
+    candidateToken: candidate.candidateToken,
+    decision: "pass",
+  }));
+  const sessions = await firestore.collection("discovery_sessions").get();
+  const tokenDocs = await sessions.docs[0].ref.collection("candidates").get();
+  const decisions = await firestore.collection("discovery_decisions").get();
+  const matches = await firestore.collection("matches").get();
+
+  assert.deepEqual(result, { status: "passed" });
+  assert.deepEqual(retry, { status: "passed" });
+  assert.equal(tokenDocs.docs[0].data().used, true);
+  assert.equal(JSON.stringify(tokenDocs.docs.map((doc) => doc.data())).includes(candidate.candidateToken), false);
+  assert.equal(decisions.size, 1);
+  assert.equal(matches.size, 0);
+
+  const rediscovery = await startDiscovery.run(request({ requestedRange: 0, pageSize: 10 }));
+  assert.equal(rediscovery.candidates.length, 0);
+});
+
+test("integration: submitDiscoveryDecision mutual likes create one sanitized match", async () => {
+  await clearFirestore();
+  await clearDatabase();
+  await seedDiscoveryUser(currentUid, {
+    displayName: "Alice",
+    batteryLevel: 77,
+  });
+  await seedDiscoveryUser("bob-match", {
+    displayName: "Bob",
+    email: "bob@example.invalid",
+    birthDate: "1998-05-05",
+    batteryLevel: 77,
+    bio: "Safe Bob bio",
+  });
+
+  const bobDiscovery = await startDiscovery.run(
+    request({ requestedRange: 0, pageSize: 10 }, "bob-match"),
+  );
+  await submitDiscoveryDecision.run(
+    request({
+      candidateToken: bobDiscovery.candidates[0].candidateToken,
+      decision: "like",
+    }, "bob-match"),
+  );
+
+  const aliceDiscovery = await startDiscovery.run(request({ requestedRange: 0, pageSize: 10 }));
+  const result = await submitDiscoveryDecision.run(request({
+    candidateToken: aliceDiscovery.candidates[0].candidateToken,
+    decision: "like",
+  }));
+  const retry = await submitDiscoveryDecision.run(request({
+    candidateToken: aliceDiscovery.candidates[0].candidateToken,
+    decision: "like",
+  }));
+  const serialized = JSON.stringify(result);
+  const matches = await firestore.collection("matches").get();
+  const decisions = await firestore.collection("discovery_decisions").get();
+
+  assert.equal(result.status, "matched");
+  assert.equal(result.match.displayName, "Bob");
+  assert.deepEqual(result.match.photoRefs, [{ photoId: "photo-bob-match" }]);
+  assert.equal(serialized.includes("bob@example.invalid"), false);
+  assert.equal(serialized.includes("birthDate"), false);
+  assert.equal(serialized.includes("risk"), false);
+  assert.equal(serialized.includes("moderation"), false);
+  assert.deepEqual(retry, result);
+  assert.equal(matches.size, 1);
+  assert.equal(decisions.size, 2);
+  assert.deepEqual(matches.docs[0].data().memberIds, [currentUid, "bob-match"].sort());
 });
 
 test("integration: bootstrap before onboarding returns onboarding-required state", async () => {
