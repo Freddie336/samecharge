@@ -562,6 +562,19 @@ test("integration: reportContent stores minimal report and hashes report token",
     })),
     (error) => error.details.code === "report_token_invalid",
   );
+
+  const noDescription = await reportContent.run(request({
+    reportToken: reportTokenForMatch(chatMatchId),
+    targetType: "match",
+    targetId: chatMatchId,
+    category: "spam",
+  }));
+  const noDescriptionReport = (await firestore.collection("reports")
+    .doc(noDescription.reportId)
+    .get()).data();
+
+  assert.equal(noDescriptionReport.description, undefined);
+  assert.equal(noDescriptionReport.retentionClass, TBD_LEGAL_REVIEW);
 });
 
 test("integration: blockUser blocks match, prevents messaging and future discovery", async () => {

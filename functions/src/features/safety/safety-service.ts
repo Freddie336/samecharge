@@ -302,7 +302,6 @@ async function reportContentTransaction(options: {
     matchId: reportContext.matchId,
     messageId: reportContext.messageId,
     category: options.input.category,
-    description,
     status: "open",
     createdAt,
     dedupeKey,
