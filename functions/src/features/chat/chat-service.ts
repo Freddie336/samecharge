@@ -140,12 +140,15 @@ async function sendMessageTransaction(options: {
 }): Promise<SendMessageResponse> {
   const text = normalizeAndAssertText(options.input.text);
   const matchRef = options.firestore.collection("matches").doc(options.input.matchId);
+  const internalRef = options.firestore.collection("users_internal").doc(options.uid);
   const messageId = messageIdFor(options.uid, options.input.clientMessageId);
   const messageRef = matchRef.collection("messages").doc(messageId);
-  const [matchSnapshot, messageSnapshot] = await Promise.all([
+  const [matchSnapshot, messageSnapshot, internalSnapshot] = await Promise.all([
     options.transaction.get(matchRef),
     options.transaction.get(messageRef),
+    options.transaction.get(internalRef),
   ]);
+  assertActiveAccount(internalSnapshot.data());
   const match = assertSendableMatch(matchSnapshot.data(), options.uid);
 
   if (messageSnapshot.exists) {
@@ -317,6 +320,12 @@ function assertReadableMatch(data: DocumentData | undefined, uid: string): {
   }
 
   return { memberIds };
+}
+
+function assertActiveAccount(data: DocumentData | undefined): void {
+  if (data?.accountStatus !== undefined && data.accountStatus !== "active") {
+    throw new AppError("account_restricted");
+  }
 }
 
 export const chatTestExports = {

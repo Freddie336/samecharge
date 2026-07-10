@@ -32,12 +32,17 @@ class MemoryChatStore {
       },
     }));
     this.messages = new Map(Object.entries(seed.messages ?? {}));
+    this.usersInternal = new Map(Object.entries(seed.usersInternal ?? {}));
   }
 
   async sendMessage(uid, input, now) {
     const text = normalizeMessageText(input.text);
     if (text.length < 1 || text.length > 1000) {
       throw new AppError("input_invalid");
+    }
+    const internal = this.usersInternal.get(uid);
+    if (internal?.accountStatus !== undefined && internal.accountStatus !== "active") {
+      throw new AppError("account_restricted");
     }
 
     const match = this._sendable(input.matchId, uid);
@@ -216,6 +221,14 @@ test("sendMessage enforces membership and match messaging state", async () => {
       },
     }))),
     (error) => error instanceof AppError && error.appCode === "match_not_active",
+  );
+  await assert.rejects(
+    () => sendMessageForUid("alice", validInput(), dependencies(new MemoryChatStore({
+      usersInternal: {
+        alice: { accountStatus: "deletion_pending" },
+      },
+    }))),
+    (error) => error instanceof AppError && error.appCode === "account_restricted",
   );
 });
 

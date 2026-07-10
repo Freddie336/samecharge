@@ -75,6 +75,10 @@ void main() {
       expect(content.contains("'sendMessage'"), isFalse);
       expect(content.contains("'markMatchRead'"), isFalse);
       expect(content.contains("'setMatchMuted'"), isFalse);
+      expect(content.contains("'reportContent'"), isFalse);
+      expect(content.contains("'blockUser'"), isFalse);
+      expect(content.contains("'unmatchUser'"), isFalse);
+      expect(content.contains("'requestAccountDeletion'"), isFalse);
     }
   });
 

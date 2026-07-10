@@ -207,6 +207,7 @@ ChatMatchSummary _parseMatch(
 
   return ChatMatchSummary(
     matchId: doc.id,
+    counterpartUserId: otherUid,
     status: data['status'] as String? ?? 'inactive',
     messagingEnabled: data['messagingEnabled'] == true,
     blocked: data['blockedBy'] != null,

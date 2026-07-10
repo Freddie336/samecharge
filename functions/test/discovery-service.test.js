@@ -56,6 +56,7 @@ class MemoryDiscoveryStore {
       alice: presence(),
     }));
     this.decidedPairKeys = new Set(seed.decidedPairKeys ?? []);
+    this.blockedPairKeys = new Set(seed.blockedPairKeys ?? []);
     this.sessions = [];
   }
 
@@ -90,6 +91,11 @@ class MemoryDiscoveryStore {
   async listDecisionPairKeysForRequester(uid) {
     assert.equal(uid, "alice");
     return new Set(this.decidedPairKeys);
+  }
+
+  async listBlockedPairKeysForRequester(uid) {
+    assert.equal(uid, "alice");
+    return new Set(this.blockedPairKeys);
   }
 
   async writeDiscoverySession(write) {
@@ -415,6 +421,49 @@ test("startDiscovery omits candidates already decided by the requester", async (
   );
   assert.equal(store.sessions[0].tokenRecords.length, 1);
   assert.equal(store.sessions[0].tokenRecords[0].candidateId, "carol");
+});
+
+test("startDiscovery omits blocked pairs", async () => {
+  const store = new MemoryDiscoveryStore({
+    privateData: {
+      alice: { birthDate: "2000-01-01" },
+      bob: { birthDate: "1998-05-05" },
+      carol: { birthDate: "1997-05-05" },
+    },
+    internal: {
+      alice: { accountStatus: "active" },
+      bob: { accountStatus: "active" },
+      carol: { accountStatus: "active" },
+    },
+    profiles: {
+      alice: profile("alice"),
+      bob: profile("bob"),
+      carol: profile("carol"),
+    },
+    preferences: {
+      alice: { discoveryEnabled: true },
+      bob: { discoveryEnabled: true },
+      carol: { discoveryEnabled: true },
+    },
+    photos: {
+      alice: [{ photoId: "photo-alice" }],
+      bob: [{ photoId: "photo-bob" }],
+      carol: [{ photoId: "photo-carol" }],
+    },
+    presence: {
+      alice: presence({ batteryLevel: 77 }),
+      bob: presence({ batteryLevel: 77 }),
+      carol: presence({ batteryLevel: 78 }),
+    },
+    blockedPairKeys: [pairKeyFor("alice", "bob")],
+  });
+
+  const result = await discover(store, { requestedRange: 1, pageSize: 10 });
+
+  assert.deepEqual(
+    result.candidates.map((candidate) => candidate.displayName),
+    ["Carol"],
+  );
 });
 
 test("startDiscovery applies exact, same-state ±1, and ±3 battery range behavior", async () => {

@@ -96,6 +96,21 @@ class AdminDiscoveryStore implements DiscoveryStore, DiscoveryDecisionStore {
       .filter((pairKey): pairKey is string => typeof pairKey === "string"));
   }
 
+  async listBlockedPairKeysForRequester(uid: string): Promise<Set<string>> {
+    const [blockedByRequester, blockedRequester] = await Promise.all([
+      this.firestore.collection("blocks").doc(uid).collection("blocked").get(),
+      this.firestore.collectionGroup("blocked")
+        .where("targetId", "==", uid)
+        .get(),
+    ]);
+
+    return new Set([
+      ...blockedByRequester.docs,
+      ...blockedRequester.docs,
+    ].map((doc) => doc.data().pairKey)
+      .filter((pairKey): pairKey is string => typeof pairKey === "string"));
+  }
+
   async writeDiscoverySession(write: DiscoverySessionWrite): Promise<void> {
     const batch = this.firestore.batch();
     const sessionRef = this.firestore.collection("discovery_sessions").doc(write.sessionId);
@@ -176,14 +191,16 @@ export async function startDiscoveryForUid(
 ): Promise<StartDiscoveryResponse> {
   const now = dependencies.now();
   const requester = await loadEligibleRequester(uid, dependencies.store, now);
-  const [candidateProfiles, decidedPairKeys] = await Promise.all([
+  const [candidateProfiles, decidedPairKeys, blockedPairKeys] = await Promise.all([
     dependencies.store.listApprovedProfiles(requester.profile.cityId),
     dependencies.store.listDecisionPairKeysForRequester(uid),
+    dependencies.store.listBlockedPairKeysForRequester(uid),
   ]);
+  const excludedPairKeys = new Set([...decidedPairKeys, ...blockedPairKeys]);
   const candidates = await eligibleCandidates({
     requesterUid: uid,
     requesterPresence: requester.presence,
-    decidedPairKeys,
+    decidedPairKeys: excludedPairKeys,
     profiles: candidateProfiles,
     requestedRange: input.requestedRange,
     pageSize: input.pageSize,
@@ -913,7 +930,13 @@ function profileFrom(uid: string, data: DocumentData | undefined): DiscoveryProf
     typeof bio !== "string" ||
     !Array.isArray(interests) ||
     !interests.every((interest) => typeof interest === "string") ||
-    profileStatus !== "approved"
+    (
+      profileStatus !== "draft" &&
+      profileStatus !== "pending" &&
+      profileStatus !== "approved" &&
+      profileStatus !== "rejected" &&
+      profileStatus !== "needs_review"
+    )
   ) {
     throw new AppError("internal");
   }
