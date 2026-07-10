@@ -1,5 +1,5 @@
 import { test } from 'node:test';
-import { assertFails } from '@firebase/rules-unit-testing';
+import { assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import {
   cleanupRulesTestEnvironment,
   createRulesTestEnvironment,
@@ -22,6 +22,19 @@ async function runDatabaseDeniedCase(name, operation, seed) {
   });
 }
 
+function validPresence(overrides = {}) {
+  return {
+    batteryLevel: 77,
+    batteryState: 'discharging',
+    cityId: 'istanbul',
+    online: true,
+    lastSeenAt: Date.now(),
+    profileEligible: true,
+    appVersion: '1.0.0+1',
+    ...overrides,
+  };
+}
+
 await runDatabaseDeniedCase(
   'Realtime Database unauthenticated client is denied reading alice presence',
   (testEnv) => testEnv.unauthenticatedContext().database().ref('presence/alice').get(),
@@ -30,7 +43,7 @@ await runDatabaseDeniedCase(
 
 await runDatabaseDeniedCase(
   'Realtime Database unauthenticated client is denied writing alice presence',
-  (testEnv) => testEnv.unauthenticatedContext().database().ref('presence/alice').set({ online: true }),
+  (testEnv) => testEnv.unauthenticatedContext().database().ref('presence/alice').set(validPresence()),
 );
 
 await runDatabaseDeniedCase(
@@ -51,10 +64,31 @@ await runDatabaseDeniedCase(
   (db) => db.ref('presence/alice').set({ online: true }),
 );
 
-await runDatabaseDeniedCase(
-  'Realtime Database authenticated alice client is denied writing her own presence',
-  (testEnv) => testEnv.authenticatedContext('alice').database().ref('presence/alice').set({ online: true }),
-);
+test('Realtime Database authenticated alice client can write her own valid presence', async () => {
+  const testEnv = await createRulesTestEnvironment();
+
+  try {
+    await assertSucceeds(testEnv.authenticatedContext('alice')
+      .database()
+      .ref('presence/alice')
+      .set(validPresence()));
+  } finally {
+    await cleanupRulesTestEnvironment(testEnv);
+  }
+});
+
+test('Realtime Database authenticated alice client can mark her own presence offline', async () => {
+  const testEnv = await createRulesTestEnvironment();
+
+  try {
+    await assertSucceeds(testEnv.authenticatedContext('alice')
+      .database()
+      .ref('presence/alice')
+      .set(validPresence({ online: false })));
+  } finally {
+    await cleanupRulesTestEnvironment(testEnv);
+  }
+});
 
 await runDatabaseDeniedCase(
   'Realtime Database authenticated alice client is denied reading bob presence',
@@ -64,7 +98,7 @@ await runDatabaseDeniedCase(
 
 await runDatabaseDeniedCase(
   'Realtime Database authenticated alice client is denied writing bob presence',
-  (testEnv) => testEnv.authenticatedContext('alice').database().ref('presence/bob').set({ online: true }),
+  (testEnv) => testEnv.authenticatedContext('alice').database().ref('presence/bob').set(validPresence()),
 );
 
 await runDatabaseDeniedCase(
@@ -74,4 +108,36 @@ await runDatabaseDeniedCase(
     db.ref('presence/alice').set({ online: true }),
     db.ref('presence/bob').set({ online: true }),
   ]),
+);
+
+await runDatabaseDeniedCase(
+  'Realtime Database authenticated alice client is denied invalid batteryLevel',
+  (testEnv) => testEnv.authenticatedContext('alice')
+    .database()
+    .ref('presence/alice')
+    .set(validPresence({ batteryLevel: 101 })),
+);
+
+await runDatabaseDeniedCase(
+  'Realtime Database authenticated alice client is denied decimal batteryLevel',
+  (testEnv) => testEnv.authenticatedContext('alice')
+    .database()
+    .ref('presence/alice')
+    .set(validPresence({ batteryLevel: 55.5 })),
+);
+
+await runDatabaseDeniedCase(
+  'Realtime Database authenticated alice client is denied future lastSeenAt',
+  (testEnv) => testEnv.authenticatedContext('alice')
+    .database()
+    .ref('presence/alice')
+    .set(validPresence({ lastSeenAt: Date.now() + 60_000 })),
+);
+
+await runDatabaseDeniedCase(
+  'Realtime Database authenticated alice client is denied extra sensitive fields',
+  (testEnv) => testEnv.authenticatedContext('alice')
+    .database()
+    .ref('presence/alice')
+    .set(validPresence({ email: 'alice@example.invalid' })),
 );

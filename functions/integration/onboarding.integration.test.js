@@ -2,11 +2,13 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const admin = require("firebase-admin");
 const sharp = require("sharp");
-const { completeOnboarding, finalizeProfilePhoto, getAppBootstrap } = require("../lib/index");
+const { completeOnboarding, finalizeProfilePhoto, getAppBootstrap, startDiscovery } = require("../lib/index");
 const { createConsentRecordId } = require("../lib/features/onboarding/consent-record-id");
+const { hashCandidateToken } = require("../lib/features/discovery/discovery-service");
 
 const auth = admin.auth();
 const firestore = admin.firestore();
+const database = admin.database();
 const bucket = admin.storage().bucket();
 let testCounter = 0;
 let currentUid = "alice-0";
@@ -54,6 +56,10 @@ async function clearStorage() {
   await bucket.deleteFiles({ force: true }).catch(() => undefined);
 }
 
+async function clearDatabase() {
+  await database.ref().set(null);
+}
+
 async function deleteCollection(collectionRef) {
   const snapshot = await collectionRef.limit(100).get();
 
@@ -80,6 +86,46 @@ async function resetUser(uid, email) {
   }
 
   await auth.createUser({ uid, email });
+}
+
+async function seedDiscoveryUser(uid, overrides = {}) {
+  const email = overrides.email ?? `${uid}@example.invalid`;
+  try {
+    await auth.createUser({ uid, email });
+  } catch {
+    // The current test user may already exist.
+  }
+
+  await firestore.doc(`users_private/${uid}`).set({
+    email,
+    birthDate: overrides.birthDate ?? "2000-01-01",
+  });
+  await firestore.doc(`users_internal/${uid}`).set({
+    accountStatus: overrides.accountStatus ?? "active",
+  });
+  await firestore.doc(`profiles/${uid}`).set({
+    displayName: overrides.displayName ?? uid,
+    cityId: "istanbul",
+    bio: overrides.bio ?? `${uid} bio`,
+    interests: overrides.interests ?? ["coffee"],
+    photoIds: [`photo-${uid}`],
+    profileStatus: overrides.profileStatus ?? "approved",
+  });
+  await firestore.doc(`preferences/${uid}`).set({
+    discoveryEnabled: overrides.discoveryEnabled ?? true,
+  });
+  await firestore.collection("profile_photos").doc(`photo-${uid}`).set({
+    ownerId: uid,
+    status: overrides.photoStatus ?? "approved",
+    storagePath: `profile_photos/${uid}/photo-${uid}.webp`,
+  });
+  await database.ref(`presence/${uid}`).set({
+    batteryLevel: overrides.batteryLevel ?? 77,
+    batteryState: overrides.batteryState ?? "discharging",
+    cityId: "istanbul",
+    online: overrides.online ?? true,
+    lastSeenAt: overrides.lastSeenAt ?? Date.now(),
+  });
 }
 
 async function uploadTempImage(uid = currentUid, uploadId = "AbCdEfGhIjKlMnOp") {
@@ -136,9 +182,14 @@ test.beforeEach(async () => {
   currentUid = `alice-${testCounter}`;
   currentEmail = `${currentUid}@example.invalid`;
   await clearFirestore();
+  await clearDatabase();
   await clearStorage();
   await resetUser(currentUid, currentEmail);
   await seedFinalizedPhoto(currentUid);
+});
+
+test.after(() => {
+  database.goOffline();
 });
 
 test("integration: exported callable count is exactly three", () => {
@@ -146,10 +197,12 @@ test("integration: exported callable count is exactly three", () => {
     "completeOnboarding",
     "finalizeProfilePhoto",
     "getAppBootstrap",
+    "startDiscovery",
   ]);
   assert.equal(typeof completeOnboarding.run, "function");
   assert.equal(typeof finalizeProfilePhoto.run, "function");
   assert.equal(typeof getAppBootstrap.run, "function");
+  assert.equal(typeof startDiscovery.run, "function");
 });
 
 test("integration: secure boundary rejects unauthenticated or missing App Check context", async () => {
@@ -161,6 +214,70 @@ test("integration: secure boundary rejects unauthenticated or missing App Check 
     () => completeOnboarding.run({ ...request(validInput()), app: undefined }),
     (error) => error.details.code === "app_check_required",
   );
+  await assert.rejects(
+    () => startDiscovery.run({ ...request({ requestedRange: 0, pageSize: 10 }), auth: undefined }),
+    (error) => error.details.code === "unauthenticated",
+  );
+});
+
+test("integration: startDiscovery rejects invalid payload and stale presence", async () => {
+  await clearFirestore();
+  await clearDatabase();
+  await seedDiscoveryUser(currentUid, {
+    lastSeenAt: Date.now() - 91_000,
+  });
+
+  await assert.rejects(
+    () => startDiscovery.run(request({ requestedRange: 2, pageSize: 10 })),
+    (error) => error.details.code === "input_invalid",
+  );
+  await assert.rejects(
+    () => startDiscovery.run(request({ requestedRange: 0, pageSize: 10 })),
+    (error) => error.details.code === "profile_not_eligible",
+  );
+});
+
+test("integration: startDiscovery accepts fresh presence and stores hashed candidate tokens", async () => {
+  await clearFirestore();
+  await clearDatabase();
+  await seedDiscoveryUser(currentUid, {
+    displayName: "Alice",
+    batteryLevel: 77,
+  });
+  await seedDiscoveryUser("bob-discovery", {
+    displayName: "Bob",
+    email: "bob@example.invalid",
+    birthDate: "1998-05-05",
+    batteryLevel: 77,
+    bio: "Safe Bob bio",
+  });
+  await seedDiscoveryUser("carol-discovery", {
+    displayName: "Carol",
+    batteryLevel: 80,
+  });
+
+  const result = await startDiscovery.run(request({ requestedRange: 3, pageSize: 10 }));
+  const serialized = JSON.stringify(result);
+
+  assert.equal(result.candidates.length, 2);
+  assert.equal(result.candidates[0].displayName, "Bob");
+  assert.equal(result.candidates[0].batteryDifference, 0);
+  assert.equal(result.candidates[0].cityLabel, "Istanbul");
+  assert.equal(serialized.includes("bob@example.invalid"), false);
+  assert.equal(serialized.includes("birthDate"), false);
+  assert.equal(serialized.includes("risk"), false);
+  assert.equal(serialized.includes("moderation"), false);
+
+  const sessions = await firestore.collection("discovery_sessions").get();
+  assert.equal(sessions.size, 1);
+  const candidates = await sessions.docs[0].ref.collection("candidates").get();
+  const firstTokenDoc = candidates.docs.find((doc) => {
+    return doc.data().tokenHash === hashCandidateToken(result.candidates[0].candidateToken);
+  });
+
+  assert.equal(candidates.size, 2);
+  assert.ok(firstTokenDoc);
+  assert.equal(JSON.stringify(candidates.docs.map((doc) => doc.data())).includes(result.candidates[0].candidateToken), false);
 });
 
 test("integration: bootstrap before onboarding returns onboarding-required state", async () => {

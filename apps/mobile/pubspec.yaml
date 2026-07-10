@@ -7,10 +7,12 @@ environment:
   sdk: ^3.12.2
 
 dependencies:
+  battery_plus: ^7.0.0
   cloud_functions: ^6.3.3
   firebase_app_check: ^0.4.5
   firebase_auth: ^6.5.4
   firebase_core: ^4.11.0
+  firebase_database: ^12.1.2
   firebase_storage: ^13.0.4
   flutter:
     sdk: flutter

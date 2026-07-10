@@ -91,3 +91,17 @@ await runFirestoreDeniedCase(
   (testEnv) => testEnv.authenticatedContext('alice').firestore().collection('profiles').get(),
   (db) => db.doc('profiles/alice').set({ displayName: 'Alice' }),
 );
+
+for (const path of [
+  'discovery_sessions/alice-session',
+  'discovery_sessions/alice-session/candidates/token-doc',
+  'discovery_decisions/alice-bob',
+  'matches/alice_bob',
+  'entitlements/alice',
+  'audit_logs/log-1',
+]) {
+  await runFirestoreDeniedCase(
+    `Firestore authenticated alice client is denied writing ${path}`,
+    (testEnv) => testEnv.authenticatedContext('alice').firestore().doc(path).set({ ownerId: 'alice' }),
+  );
+}

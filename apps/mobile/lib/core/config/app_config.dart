@@ -8,6 +8,7 @@ class AppConfig {
   const AppConfig({
     required this.environment,
     required this.displayName,
+    required this.appVersion,
     required this.firebase,
   });
 
@@ -25,6 +26,7 @@ class AppConfig {
       AppEnvironment.dev => AppConfig(
         environment: AppEnvironment.dev,
         displayName: 'SameCharge Dev',
+        appVersion: appVersionValue,
         firebase: FirebaseRuntimeConfig.forEnvironment(
           environment,
           firebaseTarget: firebaseTarget,
@@ -35,6 +37,7 @@ class AppConfig {
       AppEnvironment.prod => AppConfig(
         environment: AppEnvironment.prod,
         displayName: 'SameCharge',
+        appVersion: appVersionValue,
         firebase: FirebaseRuntimeConfig.forEnvironment(
           environment,
           firebaseTarget: firebaseTarget,
@@ -47,12 +50,15 @@ class AppConfig {
 
   final AppEnvironment environment;
   final String displayName;
+  final String appVersion;
   final FirebaseRuntimeConfig firebase;
 
   bool get isDevelopment => environment.isDevelopment;
 
   bool get isFirebaseConfigured => firebase.target.isEnabled;
 }
+
+const appVersionValue = '1.0.0+1';
 
 final appConfigProvider = Provider<AppConfig>((ref) {
   throw StateError('AppConfig must be provided at bootstrap.');

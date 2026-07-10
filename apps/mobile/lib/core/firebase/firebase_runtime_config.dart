@@ -9,6 +9,7 @@ class FirebaseRuntimeConfig {
     required this.emulatorProjectId,
     required this.emulatorHost,
     required this.authPort,
+    required this.databasePort,
     required this.functionsPort,
     required this.storagePort,
     required this.functionsRegion,
@@ -29,6 +30,7 @@ class FirebaseRuntimeConfig {
       emulatorProjectId: emulatorProjectIdValue,
       emulatorHost: host,
       authPort: authPortValue,
+      databasePort: databasePortValue,
       functionsPort: functionsPortValue,
       storagePort: storagePortValue,
       functionsRegion: functionsRegionValue,
@@ -41,6 +43,7 @@ class FirebaseRuntimeConfig {
   static const emulatorProjectIdValue = 'demo-samecharge-mobile';
   static const defaultEmulatorHostValue = '10.0.2.2';
   static const authPortValue = 9099;
+  static const databasePortValue = 9000;
   static const functionsPortValue = 5001;
   static const storagePortValue = 9199;
   static const functionsRegionValue = 'europe-west1';
@@ -49,6 +52,7 @@ class FirebaseRuntimeConfig {
   final String emulatorProjectId;
   final String emulatorHost;
   final int authPort;
+  final int databasePort;
   final int functionsPort;
   final int storagePort;
   final String functionsRegion;
