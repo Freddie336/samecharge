@@ -12,6 +12,13 @@ export interface StartDiscoveryInput {
   pageSize: number;
 }
 
+export type DiscoveryDecision = "like" | "pass";
+
+export interface SubmitDiscoveryDecisionInput {
+  candidateToken: string;
+  decision: DiscoveryDecision;
+}
+
 export interface CandidatePhotoRef {
   photoId: string;
 }
@@ -33,6 +40,22 @@ export interface StartDiscoveryResponse {
   candidates: CandidateView[];
   expiresAt: string;
 }
+
+export interface MatchPreview {
+  displayName: string;
+  age: number;
+  photoRefs: CandidatePhotoRef[];
+}
+
+export type SubmitDiscoveryDecisionResponse =
+  | { status: "passed" }
+  | { status: "liked" }
+  | {
+    status: "matched";
+    matchId: string;
+    matchedAt: string;
+    match: MatchPreview;
+  };
 
 export interface PresenceRecord {
   batteryLevel: number;
@@ -81,6 +104,10 @@ export interface DiscoveryCandidateTokenWrite {
   tokenHash: string;
   candidateId: string;
   expiresAt: Date;
+  requesterBatteryLevel: number;
+  requesterBatteryState: DiscoveryBatteryState;
+  candidateBatteryLevel: number;
+  candidateBatteryState: DiscoveryBatteryState;
 }
 
 export interface DiscoveryStore {
@@ -103,5 +130,20 @@ export interface DiscoveryTokenFactory {
 export interface StartDiscoveryDependencies {
   store: DiscoveryStore;
   tokens: DiscoveryTokenFactory;
+  now: () => Date;
+}
+
+export interface DiscoveryDecisionStore {
+  submitDecision(
+    uid: string,
+    tokenHash: string,
+    decision: DiscoveryDecision,
+    now: Date,
+  ): Promise<SubmitDiscoveryDecisionResponse>;
+}
+
+export interface SubmitDiscoveryDecisionDependencies {
+  store: DiscoveryDecisionStore;
+  tokens: Pick<DiscoveryTokenFactory, "hashToken">;
   now: () => Date;
 }

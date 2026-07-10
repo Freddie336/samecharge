@@ -1,6 +1,13 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { getDatabase } from "firebase-admin/database";
-import { DocumentData, FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
+import {
+  DocumentData,
+  FieldValue,
+  Firestore,
+  getFirestore,
+  Timestamp,
+  Transaction,
+} from "firebase-admin/firestore";
 import { AppError } from "../../callable/app-error";
 import {
   CandidateView,
@@ -10,6 +17,8 @@ import {
   DISCOVERY_TOKEN_TTL_MS,
   DiscoveryApprovedPhoto,
   DiscoveryBatteryState,
+  DiscoveryDecision,
+  DiscoveryDecisionStore,
   DiscoveryProfileRecord,
   DiscoveryRange,
   DiscoverySessionWrite,
@@ -20,9 +29,12 @@ import {
   StartDiscoveryDependencies,
   StartDiscoveryInput,
   StartDiscoveryResponse,
+  SubmitDiscoveryDecisionDependencies,
+  SubmitDiscoveryDecisionInput,
+  SubmitDiscoveryDecisionResponse,
 } from "./discovery-types";
 
-class AdminDiscoveryStore implements DiscoveryStore {
+class AdminDiscoveryStore implements DiscoveryStore, DiscoveryDecisionStore {
   private readonly firestore = getFirestore();
   private readonly database = getDatabase();
 
@@ -90,14 +102,37 @@ class AdminDiscoveryStore implements DiscoveryStore {
       const tokenRef = sessionRef.collection("candidates").doc(tokenRecord.tokenHash);
       batch.create(tokenRef, {
         tokenHash: tokenRecord.tokenHash,
+        requesterId: write.requesterId,
         candidateId: tokenRecord.candidateId,
         expiresAt: Timestamp.fromDate(tokenRecord.expiresAt),
+        requesterBatteryLevel: tokenRecord.requesterBatteryLevel,
+        requesterBatteryState: tokenRecord.requesterBatteryState,
+        candidateBatteryLevel: tokenRecord.candidateBatteryLevel,
+        candidateBatteryState: tokenRecord.candidateBatteryState,
         used: false,
         createdAt: FieldValue.serverTimestamp(),
       });
     }
 
     await batch.commit();
+  }
+
+  async submitDecision(
+    uid: string,
+    tokenHash: string,
+    decision: DiscoveryDecision,
+    now: Date,
+  ): Promise<SubmitDiscoveryDecisionResponse> {
+    return this.firestore.runTransaction((transaction) => {
+      return submitDecisionTransaction({
+        firestore: this.firestore,
+        transaction,
+        uid,
+        tokenHash,
+        decision,
+        now,
+      });
+    });
   }
 }
 
@@ -108,6 +143,17 @@ export function createDefaultStartDiscoveryDependencies(): StartDiscoveryDepende
       createRawToken: () => randomBytes(32).toString("base64url"),
       hashToken: hashCandidateToken,
       createSessionId: () => randomUUID(),
+    },
+    now: () => new Date(),
+  };
+}
+
+export function createDefaultSubmitDiscoveryDecisionDependencies():
+SubmitDiscoveryDecisionDependencies {
+  return {
+    store: new AdminDiscoveryStore(),
+    tokens: {
+      hashToken: hashCandidateToken,
     },
     now: () => new Date(),
   };
@@ -143,6 +189,10 @@ export async function startDiscoveryForUid(
       tokenHash,
       candidateId: candidate.profile.uid,
       expiresAt,
+      requesterBatteryLevel: requester.presence.batteryLevel,
+      requesterBatteryState: requester.presence.batteryState,
+      candidateBatteryLevel: candidate.presence.batteryLevel,
+      candidateBatteryState: candidate.presence.batteryState,
     });
     views.push({
       candidateToken: rawToken,
@@ -173,8 +223,430 @@ export async function startDiscoveryForUid(
   };
 }
 
+export async function submitDiscoveryDecisionForUid(
+  uid: string,
+  input: SubmitDiscoveryDecisionInput,
+  dependencies: SubmitDiscoveryDecisionDependencies,
+): Promise<SubmitDiscoveryDecisionResponse> {
+  const tokenHash = dependencies.tokens.hashToken(input.candidateToken);
+  return dependencies.store.submitDecision(
+    uid,
+    tokenHash,
+    input.decision,
+    dependencies.now(),
+  );
+}
+
 export function hashCandidateToken(token: string): string {
   return createHash("sha256").update(token, "utf8").digest("hex");
+}
+
+export function pairKeyFor(uidA: string, uidB: string): string {
+  const [left, right] = [uidA, uidB].sort();
+  return createHash("sha256").update(`${left}\u0000${right}`, "utf8").digest("hex");
+}
+
+interface CandidateTokenRecord {
+  tokenHash: string;
+  requesterId?: string;
+  candidateId: string;
+  expiresAt: Date;
+  used: boolean;
+  requesterBatteryLevel?: number;
+  requesterBatteryState?: DiscoveryBatteryState;
+  candidateBatteryLevel?: number;
+  candidateBatteryState?: DiscoveryBatteryState;
+}
+
+interface ExistingDecisionRecord {
+  requesterId: string;
+  candidateId: string;
+  pairKey: string;
+  decision: DiscoveryDecision;
+  tokenHash: string;
+  status: SubmitDiscoveryDecisionResponse["status"];
+  matchId?: string;
+  matchedAt?: string;
+}
+
+interface DecisionCandidate {
+  privateData: DiscoveryUserPrivateRecord;
+  profile: DiscoveryProfileRecord;
+  photos: DiscoveryApprovedPhoto[];
+}
+
+async function submitDecisionTransaction(options: {
+  firestore: Firestore;
+  transaction: Transaction;
+  uid: string;
+  tokenHash: string;
+  decision: DiscoveryDecision;
+  now: Date;
+}): Promise<SubmitDiscoveryDecisionResponse> {
+  const tokenSnapshot = await options.transaction.get(
+    options.firestore.collectionGroup("candidates")
+      .where("tokenHash", "==", options.tokenHash)
+      .limit(2),
+  );
+
+  if (tokenSnapshot.empty) {
+    throw new AppError("candidate_token_invalid");
+  }
+  if (tokenSnapshot.size !== 1) {
+    throw new AppError("internal");
+  }
+
+  const tokenDoc = tokenSnapshot.docs[0];
+  const sessionRef = tokenDoc.ref.parent.parent;
+  if (!sessionRef) {
+    throw new AppError("internal");
+  }
+
+  const [sessionSnapshot] = await Promise.all([
+    options.transaction.get(sessionRef),
+  ]);
+  if (!sessionSnapshot.exists) {
+    throw new AppError("candidate_token_invalid");
+  }
+
+  const token = tokenFrom(tokenDoc.data());
+  const sessionOwner = sessionSnapshot.data()?.ownerId;
+  if (
+    sessionOwner !== options.uid ||
+    (token.requesterId !== undefined && token.requesterId !== options.uid)
+  ) {
+    throw new AppError("candidate_token_invalid");
+  }
+  if (token.candidateId === options.uid) {
+    throw new AppError("candidate_token_invalid");
+  }
+
+  const pairKey = pairKeyFor(options.uid, token.candidateId);
+  const decisionRef = options.firestore.collection("discovery_decisions")
+    .doc(decisionDocumentId(pairKey, options.uid));
+  const reverseDecisionRef = options.firestore.collection("discovery_decisions")
+    .doc(decisionDocumentId(pairKey, token.candidateId));
+  const matchRef = options.firestore.collection("matches").doc(pairKey);
+
+  const [existingDecision, candidate, reverseDecision, existingMatch] = await Promise.all([
+    options.transaction.get(decisionRef),
+    loadDecisionCandidate(
+      options.firestore,
+      options.transaction,
+      token.candidateId,
+      options.now,
+    ),
+    options.transaction.get(reverseDecisionRef),
+    options.transaction.get(matchRef),
+  ]);
+
+  if (existingDecision.exists) {
+    return replayExistingDecision({
+      record: existingDecisionFrom(existingDecision.data()),
+      expectedUid: options.uid,
+      expectedCandidateId: token.candidateId,
+      expectedTokenHash: options.tokenHash,
+      expectedDecision: options.decision,
+      candidate,
+      now: options.now,
+    });
+  }
+
+  if (token.used) {
+    throw new AppError("candidate_token_used");
+  }
+  if (token.expiresAt.getTime() <= options.now.getTime()) {
+    throw new AppError("candidate_token_expired");
+  }
+
+  const baseDecisionData = {
+    requesterId: options.uid,
+    candidateId: token.candidateId,
+    pairKey,
+    decision: options.decision,
+    tokenHash: options.tokenHash,
+    createdAt: Timestamp.fromDate(options.now),
+  };
+  const usedData = {
+    used: true,
+    usedAt: Timestamp.fromDate(options.now),
+    decisionId: decisionRef.id,
+  };
+
+  if (options.decision === "pass") {
+    options.transaction.create(decisionRef, {
+      ...baseDecisionData,
+      status: "passed",
+    });
+    options.transaction.update(tokenDoc.ref, usedData);
+    return { status: "passed" };
+  }
+
+  const reverse = reverseDecision.exists ?
+    existingDecisionFrom(reverseDecision.data()) :
+    undefined;
+  const mutualLike = reverse?.decision === "like" &&
+    reverse.requesterId === token.candidateId &&
+    reverse.candidateId === options.uid;
+
+  if (!mutualLike) {
+    options.transaction.create(decisionRef, {
+      ...baseDecisionData,
+      status: "liked",
+    });
+    options.transaction.update(tokenDoc.ref, usedData);
+    return { status: "liked" };
+  }
+
+  const matchedAt = options.now.toISOString();
+  assertMatchCanBeActive(existingMatch.data());
+  if (!existingMatch.exists) {
+    const [memberA, memberB] = [options.uid, token.candidateId].sort();
+    options.transaction.create(matchRef, {
+      memberIds: [memberA, memberB],
+      createdAt: Timestamp.fromDate(options.now),
+      status: "active",
+      messagingEnabled: true,
+      blockedBy: null,
+      lastMessageAt: null,
+      matchedBatteryLevelA: batteryLevelForMember(memberA, options.uid, token),
+      matchedBatteryLevelB: batteryLevelForMember(memberB, options.uid, token),
+      matchedBatteryStateA: batteryStateForMember(memberA, options.uid, token),
+      matchedBatteryStateB: batteryStateForMember(memberB, options.uid, token),
+    });
+  }
+
+  options.transaction.create(decisionRef, {
+    ...baseDecisionData,
+    status: "matched",
+    matchId: pairKey,
+    matchedAt: Timestamp.fromDate(options.now),
+  });
+  options.transaction.update(tokenDoc.ref, usedData);
+
+  return matchedResponse(pairKey, matchedAt, candidate, options.now);
+}
+
+function tokenFrom(data: DocumentData | undefined): CandidateTokenRecord {
+  const tokenHash = data?.tokenHash;
+  const candidateId = data?.candidateId;
+  const requesterId = data?.requesterId;
+  const expiresAt = data?.expiresAt;
+  const used = data?.used;
+  const requesterBatteryState = data?.requesterBatteryState;
+  const candidateBatteryState = data?.candidateBatteryState;
+
+  if (
+    typeof tokenHash !== "string" ||
+    typeof candidateId !== "string" ||
+    (requesterId !== undefined && typeof requesterId !== "string") ||
+    !(expiresAt instanceof Timestamp) ||
+    typeof used !== "boolean"
+  ) {
+    throw new AppError("candidate_token_invalid");
+  }
+
+  return {
+    tokenHash,
+    candidateId,
+    requesterId,
+    expiresAt: expiresAt.toDate(),
+    used,
+    requesterBatteryLevel: optionalBatteryLevel(data?.requesterBatteryLevel),
+    requesterBatteryState: optionalBatteryState(requesterBatteryState),
+    candidateBatteryLevel: optionalBatteryLevel(data?.candidateBatteryLevel),
+    candidateBatteryState: optionalBatteryState(candidateBatteryState),
+  };
+}
+
+function optionalBatteryLevel(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) &&
+    value >= 0 && value <= 100 ? value : undefined;
+}
+
+function optionalBatteryState(value: unknown): DiscoveryBatteryState | undefined {
+  return DISCOVERY_BATTERY_STATES.includes(value as DiscoveryBatteryState) ?
+    value as DiscoveryBatteryState :
+    undefined;
+}
+
+async function loadDecisionCandidate(
+  firestore: Firestore,
+  transaction: Transaction,
+  uid: string,
+  now: Date,
+): Promise<DecisionCandidate> {
+  const privateRef = firestore.doc(`users_private/${uid}`);
+  const internalRef = firestore.doc(`users_internal/${uid}`);
+  const profileRef = firestore.doc(`profiles/${uid}`);
+  const preferencesRef = firestore.doc(`preferences/${uid}`);
+  const photosQuery = firestore.collection("profile_photos")
+    .where("ownerId", "==", uid)
+    .where("status", "==", "approved")
+    .limit(4);
+  const [privateSnapshot, internalSnapshot, profileSnapshot, preferencesSnapshot, photosSnapshot] =
+    await Promise.all([
+      transaction.get(privateRef),
+      transaction.get(internalRef),
+      transaction.get(profileRef),
+      transaction.get(preferencesRef),
+      transaction.get(photosQuery),
+    ]);
+
+  if (
+    !privateSnapshot.exists ||
+    !internalSnapshot.exists ||
+    !profileSnapshot.exists ||
+    !preferencesSnapshot.exists
+  ) {
+    throw new AppError("profile_not_eligible");
+  }
+
+  const privateData = privateFrom(privateSnapshot.data());
+  const internal = internalFrom(internalSnapshot.data());
+  const profile = profileFrom(uid, profileSnapshot.data());
+  const preferences = {
+    discoveryEnabled: preferencesSnapshot.data()?.discoveryEnabled,
+  };
+  const photos = photosSnapshot.docs.map((doc) => ({ photoId: doc.id }));
+
+  if (
+    !isAdult(privateData.birthDate, now) ||
+    internal.accountStatus !== "active" ||
+    profile.profileStatus !== "approved" ||
+    profile.cityId !== DISCOVERY_SUPPORTED_CITY_ID ||
+    preferences.discoveryEnabled !== true ||
+    photos.length === 0
+  ) {
+    throw new AppError("profile_not_eligible");
+  }
+
+  return { privateData, profile, photos };
+}
+
+function replayExistingDecision(options: {
+  record: ExistingDecisionRecord;
+  expectedUid: string;
+  expectedCandidateId: string;
+  expectedTokenHash: string;
+  expectedDecision: DiscoveryDecision;
+  candidate: DecisionCandidate;
+  now: Date;
+}): SubmitDiscoveryDecisionResponse {
+  if (
+    options.record.requesterId !== options.expectedUid ||
+    options.record.candidateId !== options.expectedCandidateId ||
+    options.record.tokenHash !== options.expectedTokenHash ||
+    options.record.decision !== options.expectedDecision
+  ) {
+    throw new AppError("candidate_token_used");
+  }
+
+  if (options.record.status === "passed") {
+    return { status: "passed" };
+  }
+  if (options.record.status === "liked") {
+    return { status: "liked" };
+  }
+  if (options.record.status === "matched" && options.record.matchId) {
+    return matchedResponse(
+      options.record.matchId,
+      options.record.matchedAt ?? options.now.toISOString(),
+      options.candidate,
+      options.now,
+    );
+  }
+
+  throw new AppError("internal");
+}
+
+function existingDecisionFrom(data: DocumentData | undefined): ExistingDecisionRecord {
+  const requesterId = data?.requesterId;
+  const candidateId = data?.candidateId;
+  const pairKey = data?.pairKey;
+  const decision = data?.decision;
+  const tokenHash = data?.tokenHash;
+  const status = data?.status;
+  const matchId = data?.matchId;
+  const matchedAt = data?.matchedAt;
+
+  if (
+    typeof requesterId !== "string" ||
+    typeof candidateId !== "string" ||
+    typeof pairKey !== "string" ||
+    (decision !== "like" && decision !== "pass") ||
+    typeof tokenHash !== "string" ||
+    (status !== "passed" && status !== "liked" && status !== "matched")
+  ) {
+    throw new AppError("internal");
+  }
+
+  return {
+    requesterId,
+    candidateId,
+    pairKey,
+    decision,
+    tokenHash,
+    status,
+    matchId: typeof matchId === "string" ? matchId : undefined,
+    matchedAt: matchedAt instanceof Timestamp ? matchedAt.toDate().toISOString() : undefined,
+  };
+}
+
+function assertMatchCanBeActive(data: DocumentData | undefined): void {
+  if (!data) {
+    return;
+  }
+
+  if (data.status !== "active" || data.blockedBy !== null) {
+    throw new AppError("match_not_active");
+  }
+}
+
+function matchedResponse(
+  matchId: string,
+  matchedAt: string,
+  candidate: DecisionCandidate,
+  now: Date,
+): SubmitDiscoveryDecisionResponse {
+  return {
+    status: "matched",
+    matchId,
+    matchedAt,
+    match: {
+      displayName: candidate.profile.displayName,
+      age: ageFromBirthDate(candidate.privateData.birthDate, now),
+      photoRefs: candidate.photos.map((photo) => ({ photoId: photo.photoId })),
+    },
+  };
+}
+
+function decisionDocumentId(pairKey: string, requesterId: string): string {
+  return `${pairKey}_${createHash("sha256").update(requesterId, "utf8").digest("hex").slice(0, 16)}`;
+}
+
+function batteryLevelForMember(
+  memberId: string,
+  requesterId: string,
+  token: CandidateTokenRecord,
+): number | null {
+  if (memberId === requesterId) {
+    return token.requesterBatteryLevel ?? null;
+  }
+
+  return token.candidateBatteryLevel ?? null;
+}
+
+function batteryStateForMember(
+  memberId: string,
+  requesterId: string,
+  token: CandidateTokenRecord,
+): DiscoveryBatteryState | null {
+  if (memberId === requesterId) {
+    return token.requesterBatteryState ?? null;
+  }
+
+  return token.candidateBatteryState ?? null;
 }
 
 async function loadEligibleRequester(uid: string, store: DiscoveryStore, now: Date) {
@@ -454,4 +926,5 @@ export const discoveryTestExports = {
   batteryRank,
   hashCandidateToken,
   isFreshPresence,
+  pairKeyFor,
 };

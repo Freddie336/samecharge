@@ -92,6 +92,12 @@ await runFirestoreDeniedCase(
   (db) => db.doc('profiles/alice').set({ displayName: 'Alice' }),
 );
 
+await runFirestoreDeniedCase(
+  'Firestore authenticated alice client is denied listing match documents',
+  (testEnv) => testEnv.authenticatedContext('alice').firestore().collection('matches').get(),
+  (db) => db.doc('matches/alice_bob').set({ memberIds: ['alice', 'bob'] }),
+);
+
 for (const path of [
   'discovery_sessions/alice-session',
   'discovery_sessions/alice-session/candidates/token-doc',
@@ -105,3 +111,15 @@ for (const path of [
     (testEnv) => testEnv.authenticatedContext('alice').firestore().doc(path).set({ ownerId: 'alice' }),
   );
 }
+
+await runFirestoreDeniedCase(
+  'Firestore authenticated alice client is denied updating discovery token docs',
+  (testEnv) => testEnv.authenticatedContext('alice')
+    .firestore()
+    .doc('discovery_sessions/alice-session/candidates/token-doc')
+    .update({ used: true }),
+  (db) => db.doc('discovery_sessions/alice-session/candidates/token-doc').set({
+    tokenHash: 'hash',
+    used: false,
+  }),
+);
