@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../discovery/presentation/discovery_screen.dart';
+import '../../safety/presentation/safety_settings_screen.dart';
 import '../domain/chat_models.dart';
 import 'chat_controller.dart';
 
@@ -18,7 +19,11 @@ class _ChatHomeScreenState extends State<ChatHomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: _index == 0 ? const ChatScreen() : const DiscoveryScreen(),
+      body: switch (_index) {
+        0 => const ChatScreen(),
+        1 => const DiscoveryScreen(),
+        _ => const SafetySettingsScreen(),
+      },
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (value) => setState(() => _index = value),
@@ -32,6 +37,11 @@ class _ChatHomeScreenState extends State<ChatHomeScreen> {
             icon: Icon(Icons.explore_outlined),
             selectedIcon: Icon(Icons.explore),
             label: 'Discover',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.manage_accounts_outlined),
+            selectedIcon: Icon(Icons.manage_accounts),
+            label: 'Account',
           ),
         ],
       ),
@@ -203,12 +213,10 @@ class _ChatDetailView extends StatelessWidget {
           title: Text(match.counterpartDisplayName),
           subtitle: disabledReason == null ? null : Text(disabledReason),
           trailing: IconButton(
-            key: const Key('mute-button'),
-            tooltip: match.muted ? 'Unmute' : 'Mute',
-            onPressed: controller.toggleMute,
-            icon: Icon(
-              match.muted ? Icons.notifications_off : Icons.notifications,
-            ),
+            key: const Key('chat-safety-menu-button'),
+            tooltip: 'Safety',
+            onPressed: () => _showChatSafetyMenu(context, controller, match),
+            icon: const Icon(Icons.more_vert),
           ),
         ),
         if (state.errorMessage != null)
@@ -229,16 +237,25 @@ class _ChatDetailView extends StatelessWidget {
                   alignment: message.isMine
                       ? Alignment.centerRight
                       : Alignment.centerLeft,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: message.isMine
-                          ? Theme.of(context).colorScheme.primaryContainer
-                          : const Color(0xFFE2E8F0),
-                      borderRadius: BorderRadius.circular(8),
+                  child: GestureDetector(
+                    onLongPress: () => _confirmAction(
+                      context: context,
+                      title: 'Report message',
+                      message: 'Send this message for safety review?',
+                      confirmLabel: 'Report',
+                      action: () => controller.reportMessage(message),
                     ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(10),
-                      child: Text(message.text),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: message.isMine
+                            ? Theme.of(context).colorScheme.primaryContainer
+                            : const Color(0xFFE2E8F0),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(10),
+                        child: Text(message.text),
+                      ),
                     ),
                   ),
                 );
@@ -353,4 +370,154 @@ String? _disabledReason(ChatMatchSummary match) {
   }
 
   return null;
+}
+
+Future<void> _showChatSafetyMenu(
+  BuildContext context,
+  ChatController controller,
+  ChatMatchSummary match,
+) async {
+  final selected = await showMenu<String>(
+    context: context,
+    position: const RelativeRect.fromLTRB(1, 80, 0, 0),
+    items: [
+      PopupMenuItem(
+        key: const Key('report-user-menu-item'),
+        value: 'report',
+        child: const Text('Report'),
+      ),
+      PopupMenuItem(
+        key: const Key('block-user-menu-item'),
+        value: 'block',
+        child: const Text('Block'),
+      ),
+      PopupMenuItem(
+        key: const Key('unmatch-user-menu-item'),
+        value: 'unmatch',
+        child: const Text('Unmatch'),
+      ),
+      PopupMenuItem(
+        key: const Key('mute-user-menu-item'),
+        value: 'mute',
+        child: Text(match.muted ? 'Unmute' : 'Mute'),
+      ),
+    ],
+  );
+
+  if (!context.mounted || selected == null) {
+    return;
+  }
+
+  switch (selected) {
+    case 'report':
+      await _showReportDialog(context, controller);
+      break;
+    case 'block':
+      await _confirmAction(
+        context: context,
+        title: 'Block match',
+        message: 'Messaging will be disabled for this match.',
+        confirmLabel: 'Block',
+        action: controller.blockActiveMatch,
+      );
+      break;
+    case 'unmatch':
+      await _confirmAction(
+        context: context,
+        title: 'Unmatch',
+        message: 'Messaging will be disabled for this match.',
+        confirmLabel: 'Unmatch',
+        action: controller.unmatchActiveMatch,
+      );
+      break;
+    case 'mute':
+      await controller.toggleMute();
+      break;
+  }
+}
+
+Future<void> _showReportDialog(
+  BuildContext context,
+  ChatController controller,
+) async {
+  final description = await showDialog<String>(
+    context: context,
+    builder: (context) => const _ReportDialog(),
+  );
+
+  if (description != null) {
+    await controller.reportActiveMatch(description: description);
+  }
+}
+
+class _ReportDialog extends StatefulWidget {
+  const _ReportDialog();
+
+  @override
+  State<_ReportDialog> createState() => _ReportDialogState();
+}
+
+class _ReportDialogState extends State<_ReportDialog> {
+  final _description = TextEditingController();
+
+  @override
+  void dispose() {
+    _description.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Report'),
+      content: TextField(
+        key: const Key('report-description-field'),
+        controller: _description,
+        maxLength: 1000,
+        decoration: const InputDecoration(labelText: 'Optional details'),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const Key('submit-report-button'),
+          onPressed: () => Navigator.of(context).pop(_description.text),
+          child: const Text('Report'),
+        ),
+      ],
+    );
+  }
+}
+
+Future<void> _confirmAction({
+  required BuildContext context,
+  required String title,
+  required String message,
+  required String confirmLabel,
+  required Future<void> Function() action,
+}) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(title),
+      content: Text(message),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: Key('confirm-${confirmLabel.toLowerCase()}-button'),
+          onPressed: () => Navigator.of(context).pop(true),
+          child: Text(confirmLabel),
+        ),
+      ],
+    ),
+  );
+
+  if (confirmed == true) {
+    await action();
+  }
 }

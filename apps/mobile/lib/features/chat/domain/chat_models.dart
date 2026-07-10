@@ -7,6 +7,7 @@ class ChatPhotoRef {
 class ChatMatchSummary {
   const ChatMatchSummary({
     required this.matchId,
+    required this.counterpartUserId,
     required this.status,
     required this.messagingEnabled,
     required this.blocked,
@@ -20,6 +21,7 @@ class ChatMatchSummary {
   });
 
   final String matchId;
+  final String counterpartUserId;
   final String status;
   final bool messagingEnabled;
   final bool blocked;

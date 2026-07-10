@@ -7,6 +7,8 @@ import 'package:samecharge/features/chat/data/firestore_chat_repository.dart';
 import 'package:samecharge/features/chat/domain/chat_models.dart';
 import 'package:samecharge/features/chat/domain/chat_repository.dart';
 import 'package:samecharge/features/chat/presentation/chat_home_screen.dart';
+import 'package:samecharge/features/safety/data/callable_safety_repository.dart';
+import 'package:samecharge/features/safety/domain/safety_repository.dart';
 
 class FakeChatRepository implements ChatRepository {
   FakeChatRepository({
@@ -76,6 +78,49 @@ class TestFailure implements Exception {
   const TestFailure(this.message);
 
   final String message;
+}
+
+class FakeSafetyRepository implements SafetyRepository {
+  int reportCalls = 0;
+  int blockCalls = 0;
+  int unmatchCalls = 0;
+  int deletionCalls = 0;
+  String? lastReportDescription;
+
+  @override
+  Future<void> blockUser({
+    required String targetUserId,
+    required String matchId,
+    String? reason,
+  }) async {
+    blockCalls += 1;
+  }
+
+  @override
+  Future<void> reportContent({
+    required String reportToken,
+    required String targetType,
+    required String targetId,
+    String? matchId,
+    required String category,
+    String? description,
+  }) async {
+    reportCalls += 1;
+    lastReportDescription = description;
+  }
+
+  @override
+  Future<void> requestAccountDeletion({
+    required String confirmation,
+    String? reauthenticationToken,
+  }) async {
+    deletionCalls += 1;
+  }
+
+  @override
+  Future<void> unmatchUser(String matchId) async {
+    unmatchCalls += 1;
+  }
 }
 
 void main() {
@@ -208,11 +253,99 @@ void main() {
       isFalse,
     );
   });
+
+  testWidgets('report dialog sends safe description', (tester) async {
+    final safety = FakeSafetyRepository();
+    await tester.pumpWidget(
+      _harness(FakeChatRepository(matches: [_match()]), safety: safety),
+    );
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('match-match-1')));
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('chat-safety-menu-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('report-user-menu-item')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('report-description-field')),
+      'Please review',
+    );
+    await tester.tap(find.byKey(const Key('submit-report-button')));
+    await tester.pumpAndSettle();
+
+    expect(safety.reportCalls, 1);
+    expect(safety.lastReportDescription, 'Please review');
+  });
+
+  testWidgets('block confirmation disables input after success', (
+    tester,
+  ) async {
+    final safety = FakeSafetyRepository();
+    await tester.pumpWidget(
+      _harness(FakeChatRepository(matches: [_match()]), safety: safety),
+    );
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('match-match-1')));
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('chat-safety-menu-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('block-user-menu-item')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('confirm-block-button')));
+    await tester.pumpAndSettle();
+
+    expect(safety.blockCalls, 1);
+    expect(find.text('This match is no longer active.'), findsWidgets);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('message-composer')))
+          .enabled,
+      isFalse,
+    );
+  });
+
+  testWidgets('unmatch confirmation disables input without blocking', (
+    tester,
+  ) async {
+    final safety = FakeSafetyRepository();
+    await tester.pumpWidget(
+      _harness(FakeChatRepository(matches: [_match()]), safety: safety),
+    );
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('match-match-1')));
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('chat-safety-menu-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('unmatch-user-menu-item')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('confirm-unmatch-button')));
+    await tester.pumpAndSettle();
+
+    expect(safety.unmatchCalls, 1);
+    expect(safety.blockCalls, 0);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('message-composer')))
+          .enabled,
+      isFalse,
+    );
+  });
 }
 
-Widget _harness(FakeChatRepository repo) {
+Widget _harness(FakeChatRepository repo, {FakeSafetyRepository? safety}) {
   return ProviderScope(
-    overrides: [chatRepositoryProvider.overrideWithValue(repo)],
+    overrides: [
+      chatRepositoryProvider.overrideWithValue(repo),
+      safetyRepositoryProvider.overrideWithValue(
+        safety ?? FakeSafetyRepository(),
+      ),
+    ],
     child: const MaterialApp(home: Scaffold(body: ChatScreen())),
   );
 }
@@ -224,6 +357,7 @@ ChatMatchSummary _match({
 }) {
   return ChatMatchSummary(
     matchId: 'match-1',
+    counterpartUserId: 'bob',
     status: 'active',
     messagingEnabled: messagingEnabled,
     blocked: false,

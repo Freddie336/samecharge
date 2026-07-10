@@ -171,6 +171,26 @@ test('Firestore match members can read active match messages only', async () => 
         type: 'text',
         text: 'Closed',
       }),
+      db.doc('matches/alice_blocked').set({
+        memberIds: ['alice', 'frank'],
+        status: 'blocked',
+        messagingEnabled: false,
+      }),
+      db.doc('matches/alice_blocked/messages/message-1').set({
+        senderId: 'frank',
+        type: 'text',
+        text: 'Blocked',
+      }),
+      db.doc('matches/alice_unmatched').set({
+        memberIds: ['alice', 'grace'],
+        status: 'unmatched',
+        messagingEnabled: false,
+      }),
+      db.doc('matches/alice_unmatched/messages/message-1').set({
+        senderId: 'grace',
+        type: 'text',
+        text: 'Unmatched',
+      }),
     ]));
 
     await assertSucceeds(
@@ -191,6 +211,18 @@ test('Firestore match members can read active match messages only', async () => 
         .collection('matches/alice_inactive/messages')
         .get(),
     );
+    await assertFails(
+      testEnv.authenticatedContext('alice')
+        .firestore()
+        .collection('matches/alice_blocked/messages')
+        .get(),
+    );
+    await assertFails(
+      testEnv.authenticatedContext('alice')
+        .firestore()
+        .collection('matches/alice_unmatched/messages')
+        .get(),
+    );
   } finally {
     await cleanupRulesTestEnvironment(testEnv);
   }
@@ -201,6 +233,9 @@ for (const path of [
   'discovery_sessions/alice-session/candidates/token-doc',
   'discovery_decisions/alice-bob',
   'matches/alice_bob',
+  'reports/report-1',
+  'blocks/alice/blocked/bob',
+  'deletion_jobs/alice',
   'entitlements/alice',
   'audit_logs/log-1',
 ]) {
@@ -209,6 +244,36 @@ for (const path of [
     (testEnv) => testEnv.authenticatedContext('alice').firestore().doc(path).set({ ownerId: 'alice' }),
   );
 }
+
+await runFirestoreDeniedCase(
+  'Firestore authenticated alice client is denied updating account status directly',
+  (testEnv) => testEnv.authenticatedContext('alice')
+    .firestore()
+    .doc('users_internal/alice')
+    .update({ accountStatus: 'deletion_pending' }),
+  (db) => db.doc('users_internal/alice').set({ accountStatus: 'active' }),
+);
+
+await runFirestoreDeniedCase(
+  'Firestore authenticated alice client is denied bypassing deletion pending preferences',
+  (testEnv) => testEnv.authenticatedContext('alice')
+    .firestore()
+    .doc('preferences/alice')
+    .update({ discoveryEnabled: true }),
+  (db) => db.doc('preferences/alice').set({ discoveryEnabled: false }),
+);
+
+await runFirestoreDeniedCase(
+  'Firestore authenticated alice client is denied updating report status',
+  (testEnv) => testEnv.authenticatedContext('alice')
+    .firestore()
+    .doc('reports/report-1')
+    .update({ status: 'closed' }),
+  (db) => db.doc('reports/report-1').set({
+    reporterId: 'alice',
+    status: 'open',
+  }),
+);
 
 await runFirestoreDeniedCase(
   'Firestore authenticated alice client is denied updating discovery token docs',

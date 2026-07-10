@@ -3,24 +3,37 @@ const test = require("node:test");
 const admin = require("firebase-admin");
 const sharp = require("sharp");
 const {
+  blockUser,
   completeOnboarding,
   finalizeProfilePhoto,
   getAppBootstrap,
   markMatchRead,
+  reportContent,
+  requestAccountDeletion,
   sendMessage,
   setMatchMuted,
   startDiscovery,
   submitDiscoveryDecision,
+  unmatchUser,
 } = require("../lib/index");
 const { createConsentRecordId } = require("../lib/features/onboarding/consent-record-id");
-const { hashCandidateToken } = require("../lib/features/discovery/discovery-service");
+const { hashCandidateToken, pairKeyFor } = require("../lib/features/discovery/discovery-service");
 const { chatTestExports } = require("../lib/features/chat/chat-service");
+const {
+  createDefaultSafetyDependencies,
+  processAccountDeletionForUid,
+  reportTokenForMatch,
+  reportTokenForMessage,
+  requestAccountDeletionForUid,
+  safetyTestExports,
+} = require("../lib/features/safety/safety-service");
 
 const auth = admin.auth();
 const firestore = admin.firestore();
 const database = admin.database();
 const bucket = admin.storage().bucket();
 const { messageIdFor } = chatTestExports;
+const { TBD_LEGAL_REVIEW } = safetyTestExports;
 let testCounter = 0;
 let currentUid = "alice-0";
 let currentEmail = "alice-0@example.invalid";
@@ -223,25 +236,33 @@ test.after(() => {
   database.goOffline();
 });
 
-test("integration: exported callable count is exactly eight", () => {
+test("integration: exported callable count is exactly twelve", () => {
   assert.deepEqual(Object.keys(require("../lib/index")).sort(), [
+    "blockUser",
     "completeOnboarding",
     "finalizeProfilePhoto",
     "getAppBootstrap",
     "markMatchRead",
+    "reportContent",
+    "requestAccountDeletion",
     "sendMessage",
     "setMatchMuted",
     "startDiscovery",
     "submitDiscoveryDecision",
+    "unmatchUser",
   ]);
+  assert.equal(typeof blockUser.run, "function");
   assert.equal(typeof completeOnboarding.run, "function");
   assert.equal(typeof finalizeProfilePhoto.run, "function");
   assert.equal(typeof getAppBootstrap.run, "function");
   assert.equal(typeof markMatchRead.run, "function");
+  assert.equal(typeof reportContent.run, "function");
+  assert.equal(typeof requestAccountDeletion.run, "function");
   assert.equal(typeof sendMessage.run, "function");
   assert.equal(typeof setMatchMuted.run, "function");
   assert.equal(typeof startDiscovery.run, "function");
   assert.equal(typeof submitDiscoveryDecision.run, "function");
+  assert.equal(typeof unmatchUser.run, "function");
 });
 
 test("integration: secure boundary rejects unauthenticated or missing App Check context", async () => {
@@ -288,6 +309,18 @@ test("integration: secure boundary rejects unauthenticated or missing App Check 
       app: undefined,
     }),
     (error) => error.details.code === "app_check_required",
+  );
+  await assert.rejects(
+    () => reportContent.run({
+      ...request({
+        reportToken: reportTokenForMatch(chatMatchId),
+        targetType: "match",
+        targetId: chatMatchId,
+        category: "spam",
+      }),
+      auth: undefined,
+    }),
+    (error) => error.details.code === "unauthenticated",
   );
 });
 
@@ -343,6 +376,16 @@ test("integration: startDiscovery rejects invalid payload and stale presence", a
       matchId: chatMatchId,
       clientMessageId: "client-message-1",
       text: "a".repeat(1001),
+    })),
+    (error) => error.details.code === "input_invalid",
+  );
+  await assert.rejects(
+    () => reportContent.run(request({
+      reportToken: reportTokenForMatch(chatMatchId),
+      targetType: "match",
+      targetId: chatMatchId,
+      category: "spam",
+      email: currentEmail,
     })),
     (error) => error.details.code === "input_invalid",
   );
@@ -457,6 +500,266 @@ test("integration: markMatchRead and setMatchMuted are member-only", async () =>
   assert.equal(match.mutedBy[currentUid], true);
   assert.equal(match.mutedBy["bob-chat"], undefined);
   assert.equal(match.messagingEnabled, true);
+});
+
+test("integration: reportContent stores minimal report and hashes report token", async () => {
+  await clearFirestore();
+  await seedChatMatch();
+  const messageId = "message-1";
+  await firestore.collection("matches")
+    .doc(chatMatchId)
+    .collection("messages")
+    .doc(messageId)
+    .set({
+      senderId: "bob-chat",
+      type: "text",
+      text: "Unsafe message",
+      clientMessageId: "client-message-1",
+      createdAt: admin.firestore.Timestamp.fromDate(new Date("2026-07-10T10:00:00.000Z")),
+      moderationStatus: "clean",
+    });
+
+  const input = {
+    reportToken: reportTokenForMessage(chatMatchId, messageId),
+    targetType: "message",
+    targetId: messageId,
+    matchId: chatMatchId,
+    category: "harassment",
+    description: "  Please review\u0000 this  ",
+  };
+  const result = await reportContent.run(request(input));
+  const retry = await reportContent.run(request(input));
+  const report = (await firestore.collection("reports").doc(result.reportId).get()).data();
+  const serialized = JSON.stringify(report);
+
+  assert.equal(result.status, "reported");
+  assert.deepEqual(retry, result);
+  assert.equal(report.reporterId, currentUid);
+  assert.equal(report.targetType, "message");
+  assert.equal(report.matchId, chatMatchId);
+  assert.equal(report.messageId, messageId);
+  assert.equal(report.description, "Please review this");
+  assert.equal(report.status, "open");
+  assert.equal(report.retentionClass, TBD_LEGAL_REVIEW);
+  assert.equal(serialized.includes(input.reportToken), false);
+  assert.equal(serialized.includes(currentEmail), false);
+  assert.equal(serialized.includes("birthDate"), false);
+
+  await assert.rejects(
+    () => reportContent.run(request({
+      reportToken: reportTokenForMessage(chatMatchId, messageId),
+      targetType: "message",
+      targetId: messageId,
+      matchId: chatMatchId,
+      category: "harassment",
+    }, "mallory")),
+    (error) => error.details.code === "permission_denied",
+  );
+  await assert.rejects(
+    () => reportContent.run(request({
+      ...input,
+      reportToken: "fake-token",
+    })),
+    (error) => error.details.code === "report_token_invalid",
+  );
+
+  const noDescription = await reportContent.run(request({
+    reportToken: reportTokenForMatch(chatMatchId),
+    targetType: "match",
+    targetId: chatMatchId,
+    category: "spam",
+  }));
+  const noDescriptionReport = (await firestore.collection("reports")
+    .doc(noDescription.reportId)
+    .get()).data();
+
+  assert.equal(noDescriptionReport.description, undefined);
+  assert.equal(noDescriptionReport.retentionClass, TBD_LEGAL_REVIEW);
+});
+
+test("integration: blockUser blocks match, prevents messaging and future discovery", async () => {
+  await clearFirestore();
+  await clearDatabase();
+  await seedDiscoveryUser(currentUid, {
+    displayName: "Alice",
+    batteryLevel: 77,
+  });
+  await seedDiscoveryUser("bob-chat", {
+    displayName: "Bob",
+    birthDate: "1998-05-05",
+    batteryLevel: 77,
+  });
+  const matchId = pairKeyFor(currentUid, "bob-chat");
+  await seedChatMatch({
+    matchId,
+    memberIds: [currentUid, "bob-chat"].sort(),
+  });
+
+  const result = await blockUser.run(request({
+    targetUserId: "bob-chat",
+    matchId,
+    reason: "harassment",
+  }));
+  const retry = await blockUser.run(request({
+    targetUserId: "bob-chat",
+    matchId,
+    reason: "harassment",
+  }));
+  const match = (await firestore.collection("matches").doc(matchId).get()).data();
+  const block = (await firestore.collection("blocks")
+    .doc(currentUid)
+    .collection("blocked")
+    .doc("bob-chat")
+    .get()).data();
+  const discovery = await startDiscovery.run(request({ requestedRange: 0, pageSize: 10 }));
+
+  assert.deepEqual(result, { status: "blocked" });
+  assert.deepEqual(retry, result);
+  assert.equal(match.status, "blocked");
+  assert.equal(match.messagingEnabled, false);
+  assert.equal(match.blockedBy, currentUid);
+  assert.equal(block.blockerId, currentUid);
+  assert.equal(block.targetId, "bob-chat");
+  assert.equal(block.retentionClass, TBD_LEGAL_REVIEW);
+  assert.equal(discovery.candidates.length, 0);
+  await assert.rejects(
+    () => sendMessage.run(request({
+      matchId,
+      clientMessageId: "client-message-1",
+      text: "Merhaba",
+    })),
+    (error) => error.details.code === "match_not_active",
+  );
+});
+
+test("integration: unmatchUser closes match without creating a block", async () => {
+  await clearFirestore();
+  await seedChatMatch();
+
+  const result = await unmatchUser.run(request({ matchId: chatMatchId }));
+  const retry = await unmatchUser.run(request({ matchId: chatMatchId }));
+  const match = (await firestore.collection("matches").doc(chatMatchId).get()).data();
+  const blocks = await firestore.collection("blocks")
+    .doc(currentUid)
+    .collection("blocked")
+    .get();
+
+  assert.deepEqual(result, { status: "unmatched" });
+  assert.deepEqual(retry, result);
+  assert.equal(match.status, "unmatched");
+  assert.equal(match.messagingEnabled, false);
+  assert.equal(match.unmatchedBy, currentUid);
+  assert.equal(blocks.size, 0);
+  await assert.rejects(
+    () => unmatchUser.run(request({ matchId: chatMatchId }, "mallory")),
+    (error) => error.details.code === "permission_denied",
+  );
+  await assert.rejects(
+    () => sendMessage.run(request({
+      matchId: chatMatchId,
+      clientMessageId: "client-message-1",
+      text: "Merhaba",
+    })),
+    (error) => error.details.code === "match_not_active",
+  );
+});
+
+test("integration: requestAccountDeletion requires reauthentication and service request is idempotent", async () => {
+  await clearFirestore();
+  await clearDatabase();
+  await seedDiscoveryUser(currentUid, {
+    displayName: "Alice",
+    batteryLevel: 77,
+  });
+  await seedDiscoveryUser("bob-delete", {
+    displayName: "Bob",
+    birthDate: "1998-05-05",
+    batteryLevel: 77,
+  });
+  await seedChatMatch({ memberIds: [currentUid, "bob-delete"].sort() });
+
+  await assert.rejects(
+    () => requestAccountDeletion.run(request({ confirmation: "DELETE_MY_ACCOUNT" })),
+    (error) => error.details.code === "reauthentication_required",
+  );
+
+  const dependencies = createDefaultSafetyDependencies();
+  dependencies.reauthentication = {
+    isRecentlyVerified: async () => true,
+  };
+  const input = {
+    confirmation: "DELETE_MY_ACCOUNT",
+    reauthenticationToken: "verified-recent-session-token",
+  };
+  const result = await requestAccountDeletionForUid(currentUid, input, dependencies);
+  const retry = await requestAccountDeletionForUid(currentUid, input, dependencies);
+  const internal = (await firestore.doc(`users_internal/${currentUid}`).get()).data();
+  const preferences = (await firestore.doc(`preferences/${currentUid}`).get()).data();
+  const job = (await firestore.collection("deletion_jobs").doc(currentUid).get()).data();
+  const match = (await firestore.collection("matches").doc(chatMatchId).get()).data();
+  const presence = await database.ref(`presence/${currentUid}`).get();
+
+  assert.deepEqual(result, { status: "deletion_pending" });
+  assert.deepEqual(retry, result);
+  assert.equal(internal.accountStatus, "deletion_pending");
+  assert.equal(preferences.discoveryEnabled, false);
+  assert.equal(job.status, "pending");
+  assert.equal(job.retentionClass, TBD_LEGAL_REVIEW);
+  assert.equal(match.status, "deletion_pending");
+  assert.equal(match.messagingEnabled, false);
+  assert.equal(presence.exists(), false);
+  await assert.rejects(
+    () => startDiscovery.run(request({ requestedRange: 0, pageSize: 10 })),
+    (error) => error.details.code === "account_restricted",
+  );
+  await assert.rejects(
+    () => sendMessage.run(request({
+      matchId: chatMatchId,
+      clientMessageId: "client-message-1",
+      text: "Merhaba",
+    })),
+    (error) => error.details.code === "account_restricted",
+  );
+});
+
+test("integration: processAccountDeletion is resumable and preserves retention records", async () => {
+  await clearFirestore();
+  await clearDatabase();
+  await seedDiscoveryUser(currentUid, {
+    displayName: "Alice",
+    batteryLevel: 77,
+  });
+  await seedChatMatch();
+  await firestore.collection("reports").doc("open-report").set({
+    reporterId: "bob-chat",
+    targetType: "user",
+    targetId: currentUid,
+    status: "open",
+    retentionClass: TBD_LEGAL_REVIEW,
+  });
+  await firestore.collection("deletion_jobs").doc(currentUid).set({
+    ownerId: currentUid,
+    status: "pending",
+    completedSteps: ["presence_removed"],
+    retentionClass: TBD_LEGAL_REVIEW,
+  });
+
+  const dependencies = createDefaultSafetyDependencies();
+  const first = await processAccountDeletionForUid(currentUid, dependencies);
+  const second = await processAccountDeletionForUid(currentUid, dependencies);
+  const profile = (await firestore.doc(`profiles/${currentUid}`).get()).data();
+  const report = (await firestore.collection("reports").doc("open-report").get()).data();
+  const job = (await firestore.collection("deletion_jobs").doc(currentUid).get()).data();
+
+  assert.deepEqual(second, first);
+  assert.equal(first.status, "processed");
+  assert.ok(first.completedSteps.includes("presence_removed"));
+  assert.ok(first.completedSteps.includes("profile_anonymized"));
+  assert.ok(first.completedSteps.includes("matches_closed"));
+  assert.equal(profile.displayName, "Deleted member");
+  assert.equal(report.status, "open");
+  assert.equal(report.retentionClass, TBD_LEGAL_REVIEW);
+  assert.equal(job.retentionClass, TBD_LEGAL_REVIEW);
 });
 
 test("integration: startDiscovery accepts fresh presence and stores hashed candidate tokens", async () => {

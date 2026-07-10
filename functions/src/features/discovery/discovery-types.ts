@@ -71,7 +71,7 @@ export interface DiscoveryProfileRecord {
   cityId: typeof DISCOVERY_SUPPORTED_CITY_ID;
   bio: string;
   interests: string[];
-  profileStatus: "approved";
+  profileStatus: "draft" | "pending" | "approved" | "rejected" | "needs_review";
   photoIds?: string[];
 }
 
@@ -119,6 +119,7 @@ export interface DiscoveryStore {
   getPresence(uid: string): Promise<PresenceRecord | undefined>;
   listApprovedProfiles(cityId: typeof DISCOVERY_SUPPORTED_CITY_ID): Promise<DiscoveryProfileRecord[]>;
   listDecisionPairKeysForRequester(uid: string): Promise<Set<string>>;
+  listBlockedPairKeysForRequester(uid: string): Promise<Set<string>>;
   writeDiscoverySession(write: DiscoverySessionWrite): Promise<void>;
 }
 

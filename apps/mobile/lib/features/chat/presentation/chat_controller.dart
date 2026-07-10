@@ -1,6 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/errors/app_failure.dart';
+import '../../safety/data/callable_safety_repository.dart';
+import '../../safety/domain/safety_repository.dart';
 import '../data/firestore_chat_repository.dart';
 import '../domain/chat_models.dart';
 import '../domain/chat_repository.dart';
@@ -64,11 +66,13 @@ class ChatUiState {
 
 class ChatController extends Notifier<ChatUiState> {
   late final ChatRepository _repository;
+  late final SafetyRepository _safetyRepository;
   int _clientMessageCounter = 0;
 
   @override
   ChatUiState build() {
     _repository = ref.watch(chatRepositoryProvider);
+    _safetyRepository = ref.watch(safetyRepositoryProvider);
     return const ChatUiState();
   }
 
@@ -112,6 +116,7 @@ class ChatController extends Notifier<ChatUiState> {
 
             return ChatMatchSummary(
               matchId: item.matchId,
+              counterpartUserId: item.counterpartUserId,
               status: item.status,
               messagingEnabled: item.messagingEnabled,
               blocked: item.blocked,
@@ -178,6 +183,7 @@ class ChatController extends Notifier<ChatUiState> {
       );
       final updatedMatch = ChatMatchSummary(
         matchId: match.matchId,
+        counterpartUserId: match.counterpartUserId,
         status: match.status,
         messagingEnabled: match.messagingEnabled,
         blocked: match.blocked,
@@ -216,6 +222,7 @@ class ChatController extends Notifier<ChatUiState> {
       await _repository.setMatchMuted(matchId: match.matchId, muted: muted);
       final updated = ChatMatchSummary(
         matchId: match.matchId,
+        counterpartUserId: match.counterpartUserId,
         status: match.status,
         messagingEnabled: match.messagingEnabled,
         blocked: match.blocked,
@@ -233,8 +240,113 @@ class ChatController extends Notifier<ChatUiState> {
     }
   }
 
+  Future<void> reportActiveMatch({String? description}) async {
+    final match = state.activeMatch;
+    if (match == null) {
+      return;
+    }
+
+    try {
+      await _safetyRepository.reportContent(
+        reportToken: reportTokenForMatch(match.matchId),
+        targetType: 'user',
+        targetId: match.counterpartUserId,
+        matchId: match.matchId,
+        category: 'harassment',
+        description: description,
+      );
+      state = state.copyWith(clearError: true);
+    } on AppFailure catch (error) {
+      state = state.copyWith(errorMessage: error.message);
+    }
+  }
+
+  Future<void> reportMessage(ChatMessage message) async {
+    final match = state.activeMatch;
+    if (match == null) {
+      return;
+    }
+
+    try {
+      await _safetyRepository.reportContent(
+        reportToken: reportTokenForMessage(match.matchId, message.messageId),
+        targetType: 'message',
+        targetId: message.messageId,
+        matchId: match.matchId,
+        category: 'harassment',
+      );
+      state = state.copyWith(clearError: true);
+    } on AppFailure catch (error) {
+      state = state.copyWith(errorMessage: error.message);
+    }
+  }
+
+  Future<void> blockActiveMatch() async {
+    final match = state.activeMatch;
+    if (match == null) {
+      return;
+    }
+
+    try {
+      await _safetyRepository.blockUser(
+        targetUserId: match.counterpartUserId,
+        matchId: match.matchId,
+        reason: 'safety',
+      );
+      _replaceActiveMatch(_closedMatch(match, status: 'blocked'));
+      await loadMatches();
+    } on AppFailure catch (error) {
+      state = state.copyWith(errorMessage: error.message);
+    }
+  }
+
+  Future<void> unmatchActiveMatch() async {
+    final match = state.activeMatch;
+    if (match == null) {
+      return;
+    }
+
+    try {
+      await _safetyRepository.unmatchUser(match.matchId);
+      _replaceActiveMatch(_closedMatch(match, status: 'unmatched'));
+      await loadMatches();
+    } on AppFailure catch (error) {
+      state = state.copyWith(errorMessage: error.message);
+    }
+  }
+
   String _nextClientMessageId() {
     _clientMessageCounter += 1;
     return 'msg-${DateTime.now().microsecondsSinceEpoch}-$_clientMessageCounter';
+  }
+
+  void _replaceActiveMatch(ChatMatchSummary updated) {
+    state = state.copyWith(
+      activeMatch: updated,
+      matches: state.matches
+          .map((match) => match.matchId == updated.matchId ? updated : match)
+          .toList(growable: false),
+      clearError: true,
+    );
+  }
+
+  ChatMatchSummary _closedMatch(
+    ChatMatchSummary match, {
+    required String status,
+  }) {
+    return ChatMatchSummary(
+      matchId: match.matchId,
+      counterpartUserId: match.counterpartUserId,
+      status: status,
+      messagingEnabled: false,
+      blocked: status == 'blocked' || match.blocked,
+      counterpartDisplayName: match.counterpartDisplayName,
+      counterpartAge: match.counterpartAge,
+      photoRefs: match.photoRefs,
+      unreadCount: match.unreadCount,
+      muted: match.muted,
+      lastMessagePreview: match.lastMessagePreview,
+      lastMessageAt: match.lastMessageAt,
+    );
   }
 }
