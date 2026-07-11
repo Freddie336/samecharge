@@ -17,6 +17,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  release-guards:
+    name: release-guards
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+
+      - name: Verify beta release guards
+        run: node scripts/verify-beta-release-guards.mjs
+
   mobile:
     name: mobile
     runs-on: ubuntu-latest
@@ -108,9 +124,44 @@ jobs:
         working-directory: functions
         run: npm test
 
-      - name: Test Functions integration
+  beta-smoke:
+    name: beta-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Java
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Cache Firebase emulators
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firebase-beta-smoke-${{ runner.os }}-${{ hashFiles('functions/package-lock.json') }}
+          restore-keys: |
+            firebase-beta-smoke-${{ runner.os }}-
+            firebase-functions-emulators-${{ runner.os }}-
+
+      - name: Install Functions dependencies
         working-directory: functions
-        run: npm run test:integration
+        run: npm ci
+
+      - name: Run emulator beta smoke suite
+        working-directory: functions
+        run: npm run test:beta-smoke
 
   firebase-rules:
     name: firebase-rules

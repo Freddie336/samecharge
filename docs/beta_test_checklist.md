@@ -1,5 +1,8 @@
 # SameCharge Closed Beta Test Checklist
 
+Automated CI gates before manual testing: `release-guards`, `mobile`, `functions`,
+`beta-smoke`, and `firebase-rules` must all pass on the candidate commit.
+
 Status: beta_readiness_draft  
 Scope: Android-first closed beta, Istanbul only, 18+ only  
 Last updated: 2026-07-10
